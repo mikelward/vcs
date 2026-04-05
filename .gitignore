@@ -24,6 +24,9 @@ profile.cov
 go.work
 go.work.sum
 
+# VCS detection cache
+.vcs_cache
+
 # env file
 .env
 
