@@ -10,11 +10,12 @@
 //
 // Special subcommands:
 //
-//	detect     Print the detected VCS name.
-//	rootdir    Print the repository root directory.
-//	backend    Print the VCS backend (e.g. "git" for jj-on-git).
-//	hosting    Print the hosting platform (e.g. "github").
-//	clearcache Remove .vcs_cache files under the current directory.
+//	detect      Print the detected VCS name.
+//	rootdir     Print the repository root directory.
+//	backend     Print the VCS backend (e.g. "git" for jj-on-git).
+//	hosting     Print the hosting platform (e.g. "github").
+//	prompt-info Print all prompt info in one invocation (see --format, --color).
+//	clearcache  Remove .vcs_cache files under the current directory.
 package main
 
 import (
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/mikelward/vcs/promptinfo"
 	"github.com/mikelward/vcs/vcsdetect"
 )
 
@@ -96,6 +98,9 @@ func main() {
 			fmt.Println(info.Hosting)
 		}
 		return
+	case "prompt-info":
+		promptInfo(forceVCS, hgPath, subArgs)
+		return
 	case "clearcache":
 		clearCache()
 		return
@@ -150,6 +155,62 @@ func detect(forceVCS string) *vcsdetect.Info {
 		os.Exit(1)
 	}
 	return info
+}
+
+func promptInfo(forceVCS string, hgPath string, args []string) {
+	format := promptinfo.DefaultFormat
+	colorMode := "auto"
+
+	// Parse --format, --color, and --hg-path flags.
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if strings.HasPrefix(a, "--hg-path=") {
+			hgPath = strings.TrimPrefix(a, "--hg-path=")
+			i++
+		} else if a == "--hg-path" && i+1 < len(args) {
+			hgPath = args[i+1]
+			i += 2
+		} else if strings.HasPrefix(a, "--format=") {
+			format = strings.TrimPrefix(a, "--format=")
+			i++
+		} else if a == "--format" && i+1 < len(args) {
+			format = args[i+1]
+			i += 2
+		} else if strings.HasPrefix(a, "--color=") {
+			colorMode = strings.TrimPrefix(a, "--color=")
+			i++
+		} else if a == "--color" && i+1 < len(args) {
+			colorMode = args[i+1]
+			i += 2
+		} else {
+			fmt.Fprintf(os.Stderr, "vcs prompt-info: unknown flag: %s\n", a)
+			os.Exit(1)
+		}
+	}
+
+	var color bool
+	switch colorMode {
+	case "always":
+		color = true
+	case "never":
+		color = false
+	default: // "auto"
+		fi, err := os.Stdout.Stat()
+		if err == nil {
+			color = fi.Mode()&os.ModeCharDevice != 0
+		}
+	}
+
+	info := detect(forceVCS)
+	fields := promptinfo.ParseFields(format)
+	result, err := promptinfo.Gather(info, fields, &promptinfo.Options{HgPath: hgPath})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "vcs prompt-info:", err)
+		os.Exit(1)
+	}
+	output := promptinfo.Format(result, format, color)
+	fmt.Println(output)
 }
 
 func clearCache() {
