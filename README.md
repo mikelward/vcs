@@ -54,6 +54,8 @@ vcs-hg --hg-path=/usr/bin/chg log
 | `rootdir` | Print the repository root directory. |
 | `backend` | Print the VCS backend (e.g. `git` for jj-on-git). |
 | `hosting` | Print the hosting platform (e.g. `github`). |
+| `prompt-info` | Print all prompt info (project, subdir, branch, status, fetch_stale) in one invocation. See `--format`, `--color`. |
+| `prompt-line` | Print the full preprompt first line (hostname, shpool tag, directory/VCS info, auth warning) in one invocation. See `--hostname`, `--production`, `--shpool`, `--color`, `--no-ssh`. |
 | `clearcache` | Remove `.vcs_cache` files under the current directory. |
 
 ## Commands

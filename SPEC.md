@@ -34,6 +34,8 @@ vcs (dispatcher)
 |---------|---------|
 | `vcsdetect` | VCS detection: walks directory tree, reads/writes `.vcs_cache`, detects backend and hosting |
 | `runner` | Subprocess execution helpers: `Run`, `Exec`, `ExitCode`, `FindCommand` |
+| `promptinfo` | Gathers VCS prompt fields (project, subdir, branch, status, fetch_stale) in one process |
+| `promptline` | Assembles the full preprompt first line (hostname, shpool, dir/VCS, auth) in one process |
 | `cmd/vcs` | Main dispatcher binary |
 | `cmd/vcs-git` | Git subcommand translations |
 | `cmd/vcs-hg` | Mercurial subcommand translations |
@@ -154,10 +156,24 @@ The `vcs` binary:
 
 1. Parses `--vcs`, `--hg-path`, and `--list-commands` flags.
 2. Handles special subcommands (`detect`, `rootdir`, `backend`, `hosting`,
-   `clearcache`, `--list-commands`).
+   `prompt-info`, `prompt-line`, `clearcache`, `--list-commands`).
 3. For all other subcommands, detects VCS and uses `syscall.Exec` to replace
    itself with the appropriate `vcs-*` binary. This means no extra process
    remains running.
+
+### Prompt subcommands
+
+`prompt-info` and `prompt-line` collapse several shell forks per prompt into
+a single `vcs` invocation. `prompt-info` renders just the VCS fields
+(project, subdir, branch, status, fetch_stale) via a format string.
+`prompt-line` wraps `prompt-info` and adds the hostname, shpool session tag,
+and auth (`ssh-add -L`) warning, producing the entire first line of the
+preprompt. The shell caller just prepends `\r` and appends a trailing space
+and newline.
+
+Policy (what counts as a "production" host, what the short hostname looks
+like) stays in the shell: `prompt-line` takes `--hostname` and `--production`
+as inputs so the binary never has to know.
 
 ## Hosting Detection
 

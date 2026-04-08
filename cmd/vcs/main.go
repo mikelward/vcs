@@ -15,6 +15,7 @@
 //	backend     Print the VCS backend (e.g. "git" for jj-on-git).
 //	hosting     Print the hosting platform (e.g. "github").
 //	prompt-info Print all prompt info in one invocation (see --format, --color).
+//	prompt-line Print the full preprompt first line (host + dir + auth).
 //	clearcache  Remove .vcs_cache files under the current directory.
 package main
 
@@ -27,6 +28,7 @@ import (
 	"syscall"
 
 	"github.com/mikelward/vcs/promptinfo"
+	"github.com/mikelward/vcs/promptline"
 	"github.com/mikelward/vcs/vcsdetect"
 )
 
@@ -100,6 +102,9 @@ func main() {
 		return
 	case "prompt-info":
 		promptInfo(forceVCS, hgPath, subArgs)
+		return
+	case "prompt-line":
+		promptLineCmd(forceVCS, hgPath, subArgs)
 		return
 	case "clearcache":
 		clearCache()
@@ -223,4 +228,90 @@ func clearCache() {
 		}
 		return nil
 	})
+}
+
+func promptLineCmd(forceVCS, hgPath string, args []string) {
+	// Top-level stores hgPath with the --hg-path= prefix for passthrough
+	// to vcs-hg; strip it here since promptline.Options.HgPath wants the
+	// bare path.
+	hgPath = strings.TrimPrefix(hgPath, "--hg-path=")
+	opts := &promptline.Options{
+		HgPath:   hgPath,
+		ForceVCS: forceVCS,
+		Shpool:   os.Getenv("SHPOOL_SESSION_NAME"),
+	}
+	colorMode := "auto"
+
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case strings.HasPrefix(a, "--hostname="):
+			opts.Hostname = strings.TrimPrefix(a, "--hostname=")
+			i++
+		case a == "--hostname" && i+1 < len(args):
+			opts.Hostname = args[i+1]
+			i += 2
+		case a == "--production":
+			opts.Production = true
+			i++
+		case strings.HasPrefix(a, "--shpool="):
+			opts.Shpool = strings.TrimPrefix(a, "--shpool=")
+			i++
+		case a == "--shpool" && i+1 < len(args):
+			opts.Shpool = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--hg-path="):
+			opts.HgPath = strings.TrimPrefix(a, "--hg-path=")
+			i++
+		case a == "--hg-path" && i+1 < len(args):
+			opts.HgPath = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--format="):
+			opts.Format = strings.TrimPrefix(a, "--format=")
+			i++
+		case a == "--format" && i+1 < len(args):
+			opts.Format = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--color="):
+			colorMode = strings.TrimPrefix(a, "--color=")
+			i++
+		case a == "--color" && i+1 < len(args):
+			colorMode = args[i+1]
+			i += 2
+		case a == "--no-ssh":
+			opts.SkipAuth = true
+			opts.AuthOK = true
+			i++
+		default:
+			fmt.Fprintf(os.Stderr, "vcs prompt-line: unknown flag: %s\n", a)
+			os.Exit(1)
+		}
+	}
+
+	if opts.Hostname == "" {
+		h := os.Getenv("HOSTNAME")
+		if h == "" {
+			if sh, err := os.Hostname(); err == nil {
+				h = sh
+			}
+		}
+		if idx := strings.Index(h, "."); idx >= 0 {
+			h = h[:idx]
+		}
+		opts.Hostname = h
+	}
+
+	switch colorMode {
+	case "always":
+		opts.Color = true
+	case "never":
+		opts.Color = false
+	default: // auto
+		if fi, err := os.Stdout.Stat(); err == nil {
+			opts.Color = fi.Mode()&os.ModeCharDevice != 0
+		}
+	}
+
+	fmt.Println(promptline.Build(opts))
 }
