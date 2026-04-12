@@ -242,7 +242,7 @@ func initGitRepo(t *testing.T) string {
 	tmp := t.TempDir()
 	runGit(t, tmp, "init", "-b", "main")
 	runGit(t, tmp, "config", "commit.gpgsign", "false")
-	runGit(t, tmp, "commit", "--allow-empty", "-m", "initial commit")
+	runGit(t, tmp, "commit", "--allow-empty", "--no-verify", "-m", "initial commit")
 	return tmp
 }
 
