@@ -110,7 +110,7 @@ func dispatch(subcmd string, args []string) error {
 	case "next":
 		return gitNext()
 	case "outgoing":
-		return runner.Run("git", append([]string{"--no-pager", "log", "--oneline", "@{upstream}..HEAD"}, args...)...)
+		return gitOutgoing(args)
 	case "pending":
 		return gitPending(args)
 	case "pick":
@@ -256,7 +256,11 @@ func gitMap(args []string) error {
 	if err := gitAtTip(); err != nil {
 		return gitGraph(nil)
 	}
-	return gitBase(args)
+	return gitOutgoing(args)
+}
+
+func gitOutgoing(args []string) error {
+	return runner.Run("git", append([]string{"--no-pager", "log", "--oneline", "@{upstream}..HEAD"}, args...)...)
 }
 
 func gitBranch() error {

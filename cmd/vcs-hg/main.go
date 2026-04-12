@@ -149,7 +149,7 @@ func dispatch(subcmd string, args []string) error {
 	case "next":
 		return hg(append([]string{"update", "-r", "min(children(.))"}, args...)...)
 	case "outgoing":
-		return hg(append([]string{"--pager", "never", "--quiet", "log", "-r", "draft() and not obsolete()", "--template", "{onelinesummary}\\n"}, args...)...)
+		return hgOutgoing(args)
 	case "pending":
 		return hg("--pager", "never", "status")
 	case "pick":
@@ -228,9 +228,13 @@ func hgAtTip() error {
 
 func hgMap(args []string) error {
 	if err := hgAtTip(); err == nil {
-		return hg(append([]string{"--pager", "never", "log", "-r", ".", "--template", "{onelinesummary}\\n"}, args...)...)
+		return hgOutgoing(args)
 	}
 	return hgGraph(nil)
+}
+
+func hgOutgoing(args []string) error {
+	return hg(append([]string{"--pager", "never", "--quiet", "log", "-r", "draft() and not obsolete()", "--template", "{onelinesummary}\\n"}, args...)...)
 }
 
 func hgChange(args []string) error {

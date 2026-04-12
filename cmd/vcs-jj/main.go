@@ -136,7 +136,7 @@ func dispatch(subcmd string, args []string) error {
 	case "next":
 		return jj(append([]string{"next"}, args...)...)
 	case "outgoing":
-		return jj(append([]string{"--no-pager", "log", "--no-graph", "-r", "mutable() ~ empty() ~ ancestors(remote_bookmarks())", "--template", `change_id.shortest() ++ " " ++ description.first_line() ++ "\n"`}, args...)...)
+		return jjOutgoing(args)
 	case "pending":
 		return jj(append([]string{"--no-pager", "log", "-r", "mutable() ~ empty()"}, args...)...)
 	case "pick":
@@ -212,9 +212,13 @@ func jjBase(args []string) error {
 
 func jjMap(args []string) error {
 	if err := jjAtTip(); err == nil {
-		return jjBase(args)
+		return jjOutgoing(args)
 	}
 	return jjGraph(nil)
+}
+
+func jjOutgoing(args []string) error {
+	return jj(append([]string{"--no-pager", "log", "--no-graph", "-r", "mutable() ~ empty() ~ ancestors(remote_bookmarks())", "--template", `change_id.shortest() ++ " " ++ description.first_line() ++ "\n"`}, args...)...)
 }
 
 func jjGraph(args []string) error {
