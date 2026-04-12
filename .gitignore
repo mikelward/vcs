@@ -24,6 +24,12 @@ profile.cov
 go.work
 go.work.sum
 
+# Built binaries
+/vcs
+/vcs-git
+/vcs-hg
+/vcs-jj
+
 # VCS detection cache
 .vcs_cache
 
