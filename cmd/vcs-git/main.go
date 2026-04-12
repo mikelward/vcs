@@ -249,7 +249,7 @@ func gitBase(args []string) error {
 	if err := gitAtTip(); err != nil {
 		fmt.Print("(detached) ")
 	}
-	return runner.Run("git", append([]string{"--no-pager", "log", "-1", "--oneline"}, args...)...)
+	return runner.Run("git", append([]string{"--no-pager", "log", "-1", "--oneline", "--no-decorate"}, args...)...)
 }
 
 func gitMap(args []string) error {
