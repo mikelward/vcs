@@ -108,6 +108,21 @@ the `dispatch` function of every `vcs-*` binary. If a command doesn't apply to
 a given VCS, the handler should either be a no-op (return nil) or return a
 clear "not supported" error.
 
+### Dry-run mode
+
+The `-n`, `--dry-run`, and `--simulate` flags (accepted by `vcs` and each
+`vcs-*` binary before the subcommand) print the underlying VCS command to
+stderr instead of executing it. Dry-run is propagated from `vcs` to the
+per-VCS binary via the `VCS_DRY_RUN` environment variable, which the
+`runner` package honors.
+
+Dry-run only suppresses commands dispatched through `runner.Run` /
+`runner.Exec`. Auxiliary reads (via `exec.Command(...).Output()` used to
+capture state like the current branch) still run, because the output of the
+final command depends on them. A small number of handlers mutate files
+directly (e.g. `ignore` appends to `.gitignore`); those are not currently
+suppressed by dry-run.
+
 ### Listing commands
 
 All binaries (`vcs`, `vcs-git`, `vcs-hg`, `vcs-jj`) support

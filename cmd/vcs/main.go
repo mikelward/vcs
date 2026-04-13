@@ -5,8 +5,10 @@
 //
 // Flags:
 //
-//	--vcs=NAME       Force VCS type (git, hg, jj) instead of autodetecting.
-//	--hg-path=PATH   Path to hg/chg binary (passed through to vcs-hg).
+//	--vcs=NAME            Force VCS type (git, hg, jj) instead of autodetecting.
+//	--hg-path=PATH        Path to hg/chg binary (passed through to vcs-hg).
+//	-n, --dry-run,        Print the command that would be run instead of
+//	    --simulate        executing it.
 //
 // Special subcommands:
 //
@@ -37,6 +39,7 @@ func main() {
 
 	var forceVCS string
 	var hgPath string
+	var dryRun bool
 	var passthrough []string
 
 	// Parse our flags, collect remaining args.
@@ -55,14 +58,21 @@ func main() {
 		} else if a == "--hg-path" && i+1 < len(args) {
 			hgPath = "--hg-path=" + args[i+1]
 			i += 2
+		} else if a == "-n" || a == "--dry-run" || a == "--simulate" {
+			dryRun = true
+			i++
 		} else {
 			passthrough = args[i:]
 			break
 		}
 	}
 
+	if dryRun {
+		os.Setenv("VCS_DRY_RUN", "1")
+	}
+
 	if len(passthrough) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: vcs [--vcs=NAME] [--hg-path=PATH] <subcommand> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: vcs [--vcs=NAME] [--hg-path=PATH] [-n|--dry-run] <subcommand> [args...]")
 		os.Exit(1)
 	}
 
