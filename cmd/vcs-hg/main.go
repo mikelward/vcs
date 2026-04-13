@@ -87,6 +87,12 @@ func capture(name string, args ...string) (string, error) {
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
+// dispatch translates a unified VCS subcommand into one or more hg commands.
+//
+// Note: {onelinesummary} is a template keyword built in to hg that produces
+// a one-line summary of a changeset. Users can override its output by
+// setting the command-template.oneline-summary config (note the hyphen:
+// oneline-summary, not onelinesummary).
 func dispatch(subcmd string, args []string) error {
 	switch subcmd {
 	case "absorb":
