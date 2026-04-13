@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -67,7 +68,29 @@ type Options struct {
 	// AuthOK is consulted only when SkipAuth is true. true = no warning,
 	// false = emit "SSH" warning.
 	AuthOK bool
+	// AuthCachePath is the file used to memoize the auth check across
+	// prompt invocations. Empty defaults to $HOME/.auth_cache. "-" disables
+	// the cache entirely (always dial the agent).
+	//
+	// File format matches the shell's auth_info convention: an empty file
+	// means auth is OK; any content is the literal warning text (e.g.
+	// "SSH") to display. This lets the shell and this binary share the
+	// same cache.
+	AuthCachePath string
+	// AuthCacheTTL is how long a cached auth result stays fresh. Zero
+	// defaults to DefaultAuthCacheTTL. A negative value disables the cache.
+	AuthCacheTTL time.Duration
 }
+
+// DefaultAuthCacheTTL is the default freshness window for the auth cache.
+// One hour: long enough that a typical editing session never pays the
+// ssh-agent dial cost twice, short enough that key expiry / re-add shows
+// up within the hour without intervention.
+const DefaultAuthCacheTTL = time.Hour
+
+// DefaultAuthCacheName is the filename (under $HOME) used when no
+// AuthCachePath is given. Exported so the shell/env can coordinate.
+const DefaultAuthCacheName = ".auth_cache"
 
 // Build assembles the full prompt line (no leading \r, no trailing \n).
 // The shell caller frames it with whatever CR/LF logic it wants.
@@ -217,16 +240,116 @@ func wrapBlue(s string, color bool) string {
 }
 
 func authPart(opts *Options) string {
-	var ok bool
 	if opts.SkipAuth {
-		ok = opts.AuthOK
-	} else {
-		ok = sshValid()
+		if opts.AuthOK {
+			return ""
+		}
+		return AuthWarning("SSH", opts.Color)
 	}
-	if ok {
+
+	cachePath, ttl := authCacheConfig(opts)
+	if warning, hit := readAuthCache(cachePath, ttl); hit {
+		if warning == "" {
+			return ""
+		}
+		return AuthWarning(warning, opts.Color)
+	}
+
+	var warning string
+	if !sshValid() {
+		warning = "SSH"
+	}
+	writeAuthCache(cachePath, warning)
+	if warning == "" {
 		return ""
 	}
-	return AuthWarning("SSH", opts.Color)
+	return AuthWarning(warning, opts.Color)
+}
+
+// authCacheConfig resolves the cache file path and TTL for this invocation.
+// Returns ("", 0) if caching is disabled.
+func authCacheConfig(opts *Options) (string, time.Duration) {
+	ttl := opts.AuthCacheTTL
+	if ttl == 0 {
+		ttl = DefaultAuthCacheTTL
+	}
+	if ttl < 0 {
+		return "", 0
+	}
+
+	path := opts.AuthCachePath
+	if path == "-" {
+		return "", 0
+	}
+	if path == "" {
+		home := opts.HomeDir
+		if home == "" {
+			home = os.Getenv("HOME")
+		}
+		if home == "" {
+			return "", 0
+		}
+		path = filepath.Join(home, DefaultAuthCacheName)
+	}
+	return path, ttl
+}
+
+// readAuthCache returns (warning, hit). hit=false when the cache is missing,
+// stale, or unreadable — the caller should re-run the real auth check.
+// An empty warning means auth is OK; any non-empty value is the literal
+// warning text (typically "SSH") to display.
+//
+// This mirrors the format produced by the shell's auth_info function: an
+// empty file means "no warning", and any content is the warning string
+// to show verbatim. Keeping the format compatible means the shell and
+// the Go binary can share the same cache file.
+func readAuthCache(path string, ttl time.Duration) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", false
+	}
+	if time.Since(fi.ModTime()) > ttl {
+		return "", false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimRight(string(data), "\n"), true
+}
+
+// writeAuthCache records the auth warning text (empty for "auth ok") via a
+// rename so concurrent prompts never see a half-written file. Any error is
+// silently ignored — a stale or missing cache just means the next prompt
+// re-checks the agent.
+func writeAuthCache(path string, warning string) {
+	if path == "" {
+		return
+	}
+	var payload []byte
+	if warning != "" {
+		payload = []byte(warning + "\n")
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".auth_cache.*")
+	if err != nil {
+		return
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(payload); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+	}
 }
 
 // sshAgentTimeout bounds every I/O step when talking to the agent; the

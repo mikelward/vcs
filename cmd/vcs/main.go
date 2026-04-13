@@ -18,6 +18,10 @@
 //	hosting     Print the hosting platform (e.g. "github").
 //	prompt-info Print all prompt info in one invocation (see --format, --color).
 //	prompt-line Print the full preprompt first line (host + dir + auth).
+//	            The ssh-agent check is memoized in ~/.auth_cache (default
+//	            1h TTL) to keep prompts fast. Configure with
+//	            --auth-cache=PATH (use "-" to disable) and
+//	            --auth-cache-ttl=DURATION.
 //	clearcache  Remove .vcs_cache files under the current directory.
 package main
 
@@ -28,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mikelward/vcs/promptinfo"
 	"github.com/mikelward/vcs/promptline"
@@ -293,6 +298,28 @@ func promptLineCmd(forceVCS, hgPath string, args []string) {
 			opts.SkipAuth = true
 			opts.AuthOK = true
 			i++
+		case strings.HasPrefix(a, "--auth-cache="):
+			opts.AuthCachePath = strings.TrimPrefix(a, "--auth-cache=")
+			i++
+		case a == "--auth-cache" && i+1 < len(args):
+			opts.AuthCachePath = args[i+1]
+			i += 2
+		case strings.HasPrefix(a, "--auth-cache-ttl="):
+			ttl, err := time.ParseDuration(strings.TrimPrefix(a, "--auth-cache-ttl="))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "vcs prompt-line: bad --auth-cache-ttl: %v\n", err)
+				os.Exit(1)
+			}
+			opts.AuthCacheTTL = ttl
+			i++
+		case a == "--auth-cache-ttl" && i+1 < len(args):
+			ttl, err := time.ParseDuration(args[i+1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "vcs prompt-line: bad --auth-cache-ttl: %v\n", err)
+				os.Exit(1)
+			}
+			opts.AuthCacheTTL = ttl
+			i += 2
 		default:
 			fmt.Fprintf(os.Stderr, "vcs prompt-line: unknown flag: %s\n", a)
 			os.Exit(1)
