@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mikelward/vcs/runner"
@@ -53,6 +54,17 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 	}
 	r := &Result{}
 
+	// status is the only slow (subprocess-forking) field. Launch it up
+	// front so it runs concurrently with the file-read fields below.
+	var wg sync.WaitGroup
+	if fields["status"] {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.Status = getStatus(info, opts)
+		}()
+	}
+
 	if fields["project"] {
 		r.Project = filepath.Base(info.RootDir)
 	}
@@ -69,14 +81,11 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 		r.Branch = getBranch(info)
 	}
 
-	if fields["status"] {
-		r.Status = getStatus(info, opts)
-	}
-
 	if fields["fetch_stale"] {
 		r.FetchStale = getFetchStale(fetchHeadPath(info))
 	}
 
+	wg.Wait()
 	return r, nil
 }
 
@@ -129,9 +138,26 @@ func getStatus(info *vcsdetect.Info, opts *Options) string {
 	case "git":
 		out, _ = capture("git", "-C", info.RootDir, "status", "--short", "--untracked-files=all")
 	case "jj":
-		desc, _ := capture("jj", "-R", info.RootDir, "log", "--no-graph", "-r", "@", "-T", "description")
+		// Legacy behavior: a non-empty description on @ means "clean"
+		// (the user committed work); otherwise check diff. Since jj
+		// has ~tens-of-ms startup per invocation, run both in parallel
+		// rather than serially — worst case we've "wasted" a diff call
+		// we didn't need, but wall-clock time is the slower of the two
+		// instead of their sum.
+		var desc, diff string
+		var jjwg sync.WaitGroup
+		jjwg.Add(2)
+		go func() {
+			defer jjwg.Done()
+			desc, _ = capture("jj", "-R", info.RootDir, "log", "--no-graph", "-r", "@", "-T", "description")
+		}()
+		go func() {
+			defer jjwg.Done()
+			diff, _ = capture("jj", "-R", info.RootDir, "diff", "--summary")
+		}()
+		jjwg.Wait()
 		if desc == "" {
-			out, _ = capture("jj", "-R", info.RootDir, "diff", "--summary")
+			out = diff
 		}
 	case "hg":
 		out, _ = capture(resolveHg(opts), "-R", info.RootDir, "status")

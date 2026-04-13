@@ -1,6 +1,8 @@
 package promptline
 
 import (
+	"encoding/binary"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -234,6 +236,91 @@ func TestBuildAuthWarning(t *testing.T) {
 	if !strings.HasSuffix(got, " SSH") {
 		t.Errorf("Build() = %q, want suffix %q", got, " SSH")
 	}
+}
+
+func TestSSHAgentHasKeys(t *testing.T) {
+	t.Run("empty sock", func(t *testing.T) {
+		if sshAgentHasKeys("") {
+			t.Error("empty SSH_AUTH_SOCK should report no keys")
+		}
+	})
+
+	t.Run("nonexistent sock", func(t *testing.T) {
+		if sshAgentHasKeys(filepath.Join(t.TempDir(), "missing.sock")) {
+			t.Error("nonexistent socket should report no keys")
+		}
+	})
+
+	t.Run("agent with one key", func(t *testing.T) {
+		path := startFakeAgent(t, 1)
+		if !sshAgentHasKeys(path) {
+			t.Error("agent with 1 key should report keys present")
+		}
+	})
+
+	t.Run("agent with no keys", func(t *testing.T) {
+		path := startFakeAgent(t, 0)
+		if sshAgentHasKeys(path) {
+			t.Error("agent with 0 keys should report no keys")
+		}
+	})
+
+	t.Run("agent sends wrong response type", func(t *testing.T) {
+		path := startFakeAgentRaw(t, func(c net.Conn) {
+			// Read (and discard) the 5-byte request.
+			buf := make([]byte, 5)
+			_, _ = c.Read(buf)
+			// Respond with length=5, type=30 (garbage), nkeys=7.
+			resp := []byte{0, 0, 0, 5, 30, 0, 0, 0, 7}
+			_, _ = c.Write(resp)
+		})
+		if sshAgentHasKeys(path) {
+			t.Error("wrong response type should report no keys")
+		}
+	})
+}
+
+// startFakeAgent stands up a unix socket that replies to one
+// REQUEST_IDENTITIES with an IDENTITIES_ANSWER advertising nkeys keys
+// (no actual key blobs — sshAgentHasKeys only reads the count).
+func startFakeAgent(t *testing.T, nkeys uint32) string {
+	t.Helper()
+	return startFakeAgentRaw(t, func(c net.Conn) {
+		buf := make([]byte, 5)
+		if _, err := c.Read(buf); err != nil {
+			return
+		}
+		// length = type(1) + nkeys(4) = 5
+		resp := make([]byte, 9)
+		binary.BigEndian.PutUint32(resp[0:4], 5)
+		resp[4] = 12 // SSH2_AGENT_IDENTITIES_ANSWER
+		binary.BigEndian.PutUint32(resp[5:9], nkeys)
+		_, _ = c.Write(resp)
+	})
+}
+
+func startFakeAgentRaw(t *testing.T, handle func(net.Conn)) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listen unix: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				handle(c)
+			}(c)
+		}
+	}()
+	return path
 }
 
 // initGitRepo creates a temp git repo with signing disabled and one commit.

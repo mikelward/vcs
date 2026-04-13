@@ -8,9 +8,13 @@
 package promptline
 
 import (
+	"encoding/binary"
+	"io"
+	"net"
 	"os"
-	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/mikelward/vcs/promptinfo"
 	"github.com/mikelward/vcs/vcsdetect"
@@ -67,10 +71,25 @@ type Options struct {
 
 // Build assembles the full prompt line (no leading \r, no trailing \n).
 // The shell caller frames it with whatever CR/LF logic it wants.
+//
+// dirPart and authPart both do slow work (VCS status subprocess and SSH
+// agent check respectively); they're run concurrently so the prompt is
+// gated by the slower of the two, not their sum.
 func Build(opts *Options) string {
 	host := HostPart(opts.Hostname, opts.Shpool, opts.Production, opts.Color)
-	dir := dirPart(opts)
-	auth := authPart(opts)
+
+	var dir, auth string
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		dir = dirPart(opts)
+	}()
+	go func() {
+		defer wg.Done()
+		auth = authPart(opts)
+	}()
+	wg.Wait()
 
 	out := host + " " + dir
 	if auth != "" {
@@ -210,14 +229,63 @@ func authPart(opts *Options) string {
 	return AuthWarning("SSH", opts.Color)
 }
 
-// sshValid returns true when `ssh-add -L` exits 0 (agent has at least one
-// identity). Any non-zero exit or missing ssh-add is treated as "need auth".
-// This still forks once, but the fork lives inside the Go binary instead
-// of the shell. A future optimization is to speak the ssh-agent protocol
-// over $SSH_AUTH_SOCK directly.
+// sshAgentTimeout bounds every I/O step when talking to the agent; the
+// prompt must never stall on a wedged or slow agent.
+const sshAgentTimeout = 500 * time.Millisecond
+
+// sshValid returns true when the ssh-agent at $SSH_AUTH_SOCK has at least
+// one identity loaded. It speaks the ssh-agent protocol directly instead
+// of forking `ssh-add -L`, saving a process exec + Go/ssh-add startup on
+// every prompt.
+//
+// Protocol (draft-miller-ssh-agent §3):
+//
+//	request:  uint32 length=1, byte type=11 (REQUEST_IDENTITIES)
+//	response: uint32 length, byte type=12 (IDENTITIES_ANSWER),
+//	          uint32 nkeys, <keys...>
+//
+// Any error, missing socket, or wrong response type is treated as "no
+// auth" — the shell gets a yellow SSH warning, same as when ssh-add
+// wasn't on PATH.
 func sshValid() bool {
-	cmd := exec.Command("ssh-add", "-L")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run() == nil
+	return sshAgentHasKeys(os.Getenv("SSH_AUTH_SOCK"))
+}
+
+// sshAgentHasKeys performs one round-trip to the ssh-agent at sock and
+// returns true if it reports at least one loaded identity. Split out of
+// sshValid for testing with a fake unix socket.
+func sshAgentHasKeys(sock string) bool {
+	if sock == "" {
+		return false
+	}
+	conn, err := net.DialTimeout("unix", sock, sshAgentTimeout)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(sshAgentTimeout))
+
+	// length=1, type=11 (SSH2_AGENTC_REQUEST_IDENTITIES)
+	if _, err := conn.Write([]byte{0, 0, 0, 1, 11}); err != nil {
+		return false
+	}
+
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
+		return false
+	}
+	respLen := binary.BigEndian.Uint32(lenBuf[:])
+	// Minimum payload: type(1) + nkeys(4).
+	if respLen < 5 {
+		return false
+	}
+	var hdr [5]byte
+	if _, err := io.ReadFull(conn, hdr[:]); err != nil {
+		return false
+	}
+	if hdr[0] != 12 { // SSH2_AGENT_IDENTITIES_ANSWER
+		return false
+	}
+	nkeys := binary.BigEndian.Uint32(hdr[1:5])
+	return nkeys > 0
 }
