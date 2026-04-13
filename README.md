@@ -44,7 +44,15 @@ vcs-hg --hg-path=/usr/bin/chg log
 |------|-------------|
 | `--vcs=NAME` | Skip auto-detection; use the given VCS (`git`, `hg`, `jj`). |
 | `--hg-path=PATH` | Path to `hg` or `chg` binary (passed through to `vcs-hg`). Useful for callers that cache the lookup. |
+| `-n`, `--dry-run`, `--simulate` | Print the underlying VCS command to stderr instead of running it. Must appear before the subcommand. Can also be toggled via the `VCS_DRY_RUN` environment variable. |
 | `--list-commands` | Print all supported subcommand names, one per line. Useful for shell integration (see below). |
+
+Example:
+
+```
+$ vcs -n commit -m "fix bug"
++ git commit -m 'fix bug' --all
+```
 
 ### Special subcommands
 

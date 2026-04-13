@@ -2,7 +2,10 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/mikelward/vcs/runner"
 )
 
 func TestSplitGitArgs(t *testing.T) {
@@ -79,5 +82,24 @@ func TestDispatchReturnsErrorForUnknown(t *testing.T) {
 	err := dispatch("nonexistent_command_xyz", nil)
 	if err == nil {
 		t.Error("expected error for unknown subcommand")
+	}
+}
+
+// TestDispatchDryRun verifies that with runner.DryRun set, dispatch prints
+// the underlying git command to stderr and doesn't execute it.
+func TestDispatchDryRun(t *testing.T) {
+	old := runner.DryRun
+	runner.DryRun = true
+	t.Cleanup(func() { runner.DryRun = old })
+
+	out, err := captureIO(t, func() error {
+		return dispatch("commit", []string{"-m", "hello world"})
+	})
+	if err != nil {
+		t.Fatalf("dispatch dry-run: %v\n%s", err, out)
+	}
+	want := "+ git commit -m 'hello world' --all"
+	if !strings.Contains(out, want) {
+		t.Errorf("dry-run output missing %q; got: %q", want, out)
 	}
 }

@@ -19,26 +19,42 @@ import (
 var hgCmd string
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--list-commands" {
+	args := os.Args[1:]
+
+	// Parse leading flags before the subcommand. --hg-path and the
+	// dry-run flags may appear in any order.
+	hgPathSet := false
+	for len(args) > 0 {
+		a := args[0]
+		switch {
+		case a == "-n" || a == "--dry-run" || a == "--simulate":
+			runner.DryRun = true
+			args = args[1:]
+		case strings.HasPrefix(a, "--hg-path="):
+			hgCmd = strings.TrimPrefix(a, "--hg-path=")
+			hgPathSet = true
+			args = args[1:]
+		case a == "--hg-path" && len(args) > 1:
+			hgCmd = args[1]
+			hgPathSet = true
+			args = args[2:]
+		default:
+			goto doneFlags
+		}
+	}
+doneFlags:
+
+	if len(args) > 0 && args[0] == "--list-commands" {
 		listCommands()
 		return
 	}
 
-	args := os.Args[1:]
-
-	// Check for --hg-path flag before subcommand.
-	if len(args) > 0 && strings.HasPrefix(args[0], "--hg-path=") {
-		hgCmd = strings.TrimPrefix(args[0], "--hg-path=")
-		args = args[1:]
-	} else if len(args) > 1 && args[0] == "--hg-path" {
-		hgCmd = args[1]
-		args = args[2:]
-	} else {
+	if !hgPathSet {
 		hgCmd = findHg()
 	}
 
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: vcs-hg [--hg-path=PATH] <subcommand> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: vcs-hg [--hg-path=PATH] [-n|--dry-run] <subcommand> [args...]")
 		os.Exit(1)
 	}
 	subcmd := args[0]

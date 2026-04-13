@@ -16,19 +16,29 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "--list-commands" {
+	args := os.Args[1:]
+	// Consume leading dry-run flags before the subcommand.
+	for len(args) > 0 && isDryRunFlag(args[0]) {
+		runner.DryRun = true
+		args = args[1:]
+	}
+	if len(args) > 0 && args[0] == "--list-commands" {
 		listCommands()
 		return
 	}
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: vcs-git <subcommand> [args...]")
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: vcs-git [-n|--dry-run] <subcommand> [args...]")
 		os.Exit(1)
 	}
-	subcmd := os.Args[1]
-	args := os.Args[2:]
+	subcmd := args[0]
+	subArgs := args[1:]
 
-	err := dispatch(subcmd, args)
+	err := dispatch(subcmd, subArgs)
 	os.Exit(runner.ExitCode(err))
+}
+
+func isDryRunFlag(a string) bool {
+	return a == "-n" || a == "--dry-run" || a == "--simulate"
 }
 
 func dispatch(subcmd string, args []string) error {
