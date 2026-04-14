@@ -12,7 +12,10 @@
 //
 // Special subcommands:
 //
-//	detect      Print the detected VCS name.
+//	detect [path]
+//	            Print the detected VCS name. If path is given, detect the
+//	            VCS for that file or directory instead of the current
+//	            working directory.
 //	rootdir     Print the repository root directory.
 //	backend     Print the VCS backend (e.g. "git" for jj-on-git).
 //	hosting     Print the hosting platform (e.g. "github").
@@ -85,7 +88,12 @@ func main() {
 		listCommands()
 		return
 	case "detect":
-		info := detect(forceVCS)
+		dir, err := detectDir(subArgs)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "vcs detect:", err)
+			os.Exit(1)
+		}
+		info := detectAt(forceVCS, dir)
 		fmt.Println(info.VCS)
 		return
 	case "rootdir":
@@ -152,7 +160,10 @@ func detect(forceVCS string) *vcsdetect.Info {
 		fmt.Fprintln(os.Stderr, "vcs: cannot get working directory:", err)
 		os.Exit(1)
 	}
+	return detectAt(forceVCS, dir)
+}
 
+func detectAt(forceVCS, dir string) *vcsdetect.Info {
 	if forceVCS != "" {
 		// Still detect to get rootdir/backend/hosting, but override VCS.
 		info, _ := vcsdetect.Detect(dir)
@@ -170,6 +181,27 @@ func detect(forceVCS string) *vcsdetect.Info {
 		os.Exit(1)
 	}
 	return info
+}
+
+// detectDir resolves the directory to detect in from the subcommand args.
+// With no args, returns the current working directory. With one arg, returns
+// the path itself if it's a directory, or its parent directory if it's a file.
+func detectDir(args []string) (string, error) {
+	if len(args) == 0 {
+		return os.Getwd()
+	}
+	if len(args) > 1 {
+		return "", fmt.Errorf("too many arguments")
+	}
+	path := args[0]
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if fi.IsDir() {
+		return path, nil
+	}
+	return filepath.Dir(path), nil
 }
 
 func promptInfo(forceVCS string, hgPath string, args []string) {
