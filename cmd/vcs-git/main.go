@@ -52,7 +52,7 @@ func dispatch(subcmd string, args []string) error {
 	case "amend":
 		return gitAmend(args)
 	case "annotate", "blame":
-		return git("blame", args...)
+		return runner.Run("git", append([]string{"--no-pager", "blame"}, args...)...)
 	case "at_tip":
 		return gitAtTip()
 	case "base":
@@ -64,11 +64,11 @@ func dispatch(subcmd string, args []string) error {
 	case "change":
 		return git("commit", append([]string{"--amend"}, args...)...)
 	case "changed":
-		return git("diff", append([]string{"--name-only"}, args...)...)
+		return runner.Run("git", append([]string{"--no-pager", "diff", "--name-only"}, args...)...)
 	case "changelog":
-		return git("log", append([]string{"--oneline"}, args...)...)
+		return runner.Run("git", append([]string{"--no-pager", "log", "--oneline"}, args...)...)
 	case "changes":
-		return git("diff", args...)
+		return runner.Run("git", append([]string{"--no-pager", "diff"}, args...)...)
 	case "checkout", "goto":
 		return git("checkout", args...)
 	case "commit":
@@ -82,9 +82,9 @@ func dispatch(subcmd string, args []string) error {
 	case "diffedit":
 		return git("rebase", append([]string{"--interactive"}, args...)...)
 	case "diffs":
-		return git("diff", args...)
+		return runner.Run("git", append([]string{"--no-pager", "diff"}, args...)...)
 	case "diffstat":
-		return git("diff", append([]string{"--stat"}, args...)...)
+		return runner.Run("git", append([]string{"--no-pager", "diff", "--stat"}, args...)...)
 	case "drop":
 		if len(args) < 1 {
 			return fmt.Errorf("drop requires a commit argument")
@@ -108,7 +108,7 @@ func dispatch(subcmd string, args []string) error {
 	case "ignore":
 		return gitIgnore(args)
 	case "incoming":
-		return git("log", append([]string{"--oneline", "HEAD..@{upstream}"}, args...)...)
+		return runner.Run("git", append([]string{"--no-pager", "log", "--oneline", "HEAD..@{upstream}"}, args...)...)
 	case "lint":
 		return git("lint", args...)
 	case "map":
@@ -152,7 +152,7 @@ func dispatch(subcmd string, args []string) error {
 	case "rootdir":
 		return git("rootdir")
 	case "show":
-		return git("show", args...)
+		return runner.Run("git", append([]string{"--no-pager", "show"}, args...)...)
 	case "split":
 		return git("rebase", append([]string{"-i"}, args...)...)
 	case "squash":

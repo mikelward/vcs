@@ -104,13 +104,13 @@ func dispatch(subcmd string, args []string) error {
 	case "amend":
 		return hg(append([]string{"amend"}, args...)...)
 	case "annotate":
-		return hg(append([]string{"annotate"}, args...)...)
+		return hg(append([]string{"--pager", "never", "annotate"}, args...)...)
 	case "at_tip":
 		return hgAtTip()
 	case "base":
 		return hg(append([]string{"--pager", "never", "log", "-r", ".", "--template", "{onelinesummary}\\n"}, args...)...)
 	case "blame":
-		return hg(append([]string{"blame"}, args...)...)
+		return hg(append([]string{"--pager", "never", "blame"}, args...)...)
 	case "branch":
 		return hg("branch")
 	case "branches":
@@ -120,9 +120,9 @@ func dispatch(subcmd string, args []string) error {
 	case "changed":
 		return hgChanged(args)
 	case "changelog":
-		return hg(append([]string{"log", "--template", "{onelinesummary}\\n"}, args...)...)
+		return hg(append([]string{"--pager", "never", "log", "--template", "{onelinesummary}\\n"}, args...)...)
 	case "changes":
-		return hg(append([]string{"diff"}, args...)...)
+		return hg(append([]string{"--pager", "never", "diff"}, args...)...)
 	case "checkout", "goto":
 		if subcmd == "goto" {
 			return hg(append([]string{"update"}, args...)...)
@@ -137,9 +137,9 @@ func dispatch(subcmd string, args []string) error {
 	case "diffedit":
 		return hg(append([]string{"histedit"}, args...)...)
 	case "diffs":
-		return hg(append([]string{"diff"}, args...)...)
+		return hg(append([]string{"--pager", "never", "diff"}, args...)...)
 	case "diffstat":
-		return hg(append([]string{"diff", "--stat"}, args...)...)
+		return hg(append([]string{"--pager", "never", "diff", "--stat"}, args...)...)
 	case "drop":
 		return hg(append([]string{"prune"}, args...)...)
 	case "evolve":
@@ -159,7 +159,7 @@ func dispatch(subcmd string, args []string) error {
 	case "ignore":
 		return hgIgnore(args)
 	case "incoming":
-		return hg(append([]string{"incoming", "--template", "{onelinesummary}\\n"}, args...)...)
+		return hg(append([]string{"--pager", "never", "incoming", "--template", "{onelinesummary}\\n"}, args...)...)
 	case "lint":
 		return hg(append([]string{"lint"}, args...)...)
 	case "map":
@@ -204,13 +204,13 @@ func dispatch(subcmd string, args []string) error {
 	case "rootdir":
 		return hg("root")
 	case "show":
-		return hg(append([]string{"export"}, args...)...)
+		return hg(append([]string{"--pager", "never", "export"}, args...)...)
 	case "split":
 		return hg(append([]string{"split"}, args...)...)
 	case "squash":
 		return hg(append([]string{"fold"}, args...)...)
 	case "status":
-		return hg(append([]string{"status"}, args...)...)
+		return hg(append([]string{"--pager", "never", "status"}, args...)...)
 	case "submit":
 		return hg("submit")
 	case "submitforce":
