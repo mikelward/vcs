@@ -168,7 +168,7 @@ func dispatch(subcmd string, args []string) error {
 	case "restore":
 		return jj(append([]string{"restore"}, args...)...)
 	case "revert":
-		return jj(append([]string{"revert"}, args...)...)
+		return jjRevert(args)
 	case "review", "upload", "uploadchain":
 		return jjReview(args)
 	case "reword":
@@ -310,6 +310,23 @@ func jjRename(args []string) error {
 		return fmt.Errorf("usage: rename <source> <dest>")
 	}
 	return runner.Run("mv", args[0], args[1])
+}
+
+// jjRevert dispatches the "revert" subcommand. With no args, it undoes
+// working-copy changes (like "git reset --hard"). If any flag is present
+// (e.g. -r to pick a revision), it passes through to "jj revert", which
+// creates a revert commit. Otherwise all args are treated as file paths
+// and passed to "jj restore".
+func jjRevert(args []string) error {
+	if len(args) == 0 {
+		return jj("restore")
+	}
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			return jj(append([]string{"revert"}, args...)...)
+		}
+	}
+	return jj(append([]string{"restore"}, args...)...)
 }
 
 func jjReview(args []string) error {

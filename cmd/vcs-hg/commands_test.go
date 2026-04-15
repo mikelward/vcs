@@ -214,6 +214,27 @@ func TestRevert(t *testing.T) {
 	}
 }
 
+func TestRevertNoArgs(t *testing.T) {
+	_, local := newHgRepo(t)
+	writeFile(t, local, "a.txt", "clean-a\n")
+	writeFile(t, local, "b.txt", "clean-b\n")
+	hgRun(t, local, "add", "a.txt", "b.txt")
+	hgRun(t, local, "commit", "-m", "add two")
+	writeFile(t, local, "a.txt", "dirty-a\n")
+	writeFile(t, local, "b.txt", "dirty-b\n")
+	if _, err := runDispatch(t, local, "revert"); err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(local, "a.txt"))
+	if string(got) != "clean-a\n" {
+		t.Errorf("a.txt = %q", got)
+	}
+	got, _ = os.ReadFile(filepath.Join(local, "b.txt"))
+	if string(got) != "clean-b\n" {
+		t.Errorf("b.txt = %q", got)
+	}
+}
+
 func TestStatus(t *testing.T) {
 	_, local := newHgRepo(t)
 	writeFile(t, local, "s.txt", "x\n")

@@ -192,8 +192,10 @@ func dispatch(subcmd string, args []string) error {
 		return hg(append([]string{"commit", "--amend"}, args...)...)
 	case "remove", "rm":
 		return hg(append([]string{"remove"}, args...)...)
-	case "restore", "revert":
+	case "restore":
 		return hg(append([]string{"revert"}, args...)...)
+	case "revert":
+		return hgRevert(args)
 	case "review":
 		fmt.Fprintln(os.Stderr, "hg review not supported")
 		return fmt.Errorf("not supported")
@@ -271,6 +273,16 @@ func hgChanged(args []string) error {
 		return hg("status", "--no-status")
 	}
 	return hg(append([]string{"log", "--template", "{files}\\n"}, args...)...)
+}
+
+// hgRevert dispatches the "revert" subcommand. hg revert with no args
+// refuses with "use --all"; translate that to hg revert --all so bare
+// revert undoes all working-copy changes, matching vcs-git behavior.
+func hgRevert(args []string) error {
+	if len(args) == 0 {
+		return hg("revert", "--all")
+	}
+	return hg(append([]string{"revert"}, args...)...)
 }
 
 func hgReword(args []string) error {

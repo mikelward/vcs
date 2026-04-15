@@ -123,7 +123,7 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 | `move` / `rename` | Rename file | `git mv` | `hg rename` | `mv` |
 | `remove` / `rm` | Remove file | `git rm` | `hg remove` | `rm` + `jj file untrack` |
 | `restore` | Restore file to committed state | `git checkout --` | `hg revert` | `jj restore` |
-| `revert` | Revert all changes | `git reset --hard` | `hg revert` | `jj revert` |
+| `revert` | Revert all changes | `git reset --hard` | `hg revert` | `jj restore` |
 | `ignore` | Add to ignore file | append to `.gitignore` | append to `.hgignore` | append to `.gitignore` |
 | `track` | Track file | `git add --intent-to-add` | `hg add` | `jj file track` |
 | `untrack` | Stop tracking file | `git rm --cached` | `hg forget` | `jj untrack` |

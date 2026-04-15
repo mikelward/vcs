@@ -185,6 +185,42 @@ func TestDescribe(t *testing.T) {
 // revert / undo / status
 //
 
+func TestRevertNoArgs(t *testing.T) {
+	repo := newJJRepo(t)
+	writeFile(t, repo, "f.txt", "original\n")
+	jjRun(t, repo, "commit", "-m", "add f")
+	writeFile(t, repo, "f.txt", "changed\n")
+
+	if _, err := runDispatch(t, repo, "revert"); err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(repo, "f.txt"))
+	if string(got) != "original\n" {
+		t.Errorf("revert should restore working copy; f.txt = %q", got)
+	}
+}
+
+func TestRevertFileArg(t *testing.T) {
+	repo := newJJRepo(t)
+	writeFile(t, repo, "keep.txt", "keep\n")
+	writeFile(t, repo, "revertme.txt", "original\n")
+	jjRun(t, repo, "commit", "-m", "add two")
+	writeFile(t, repo, "keep.txt", "changed-keep\n")
+	writeFile(t, repo, "revertme.txt", "changed-revert\n")
+
+	if _, err := runDispatch(t, repo, "revert", "revertme.txt"); err != nil {
+		t.Fatalf("revert file: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(repo, "revertme.txt"))
+	if string(got) != "original\n" {
+		t.Errorf("revertme.txt = %q", got)
+	}
+	got, _ = os.ReadFile(filepath.Join(repo, "keep.txt"))
+	if string(got) != "changed-keep\n" {
+		t.Errorf("keep.txt = %q (should be preserved)", got)
+	}
+}
+
 func TestRevertThenUndo(t *testing.T) {
 	repo := newJJRepo(t)
 	writeFile(t, repo, "f.txt", "original\n")
