@@ -52,7 +52,7 @@ func dispatch(subcmd string, args []string) error {
 	case "amend":
 		return gitAmend(args)
 	case "annotate", "blame":
-		return runner.Run("git", append([]string{"--no-pager", "blame"}, args...)...)
+		return git("blame", args...)
 	case "at_tip":
 		return gitAtTip()
 	case "base":
@@ -60,15 +60,15 @@ func dispatch(subcmd string, args []string) error {
 	case "branch":
 		return gitBranch()
 	case "branches":
-		return runner.Run("git", append([]string{"--no-pager", "branch"}, args...)...)
+		return git("branch", args...)
 	case "change":
 		return git("commit", append([]string{"--amend"}, args...)...)
 	case "changed":
-		return runner.Run("git", append([]string{"--no-pager", "diff", "--name-only"}, args...)...)
+		return git("diff", append([]string{"--name-only"}, args...)...)
 	case "changelog":
-		return runner.Run("git", append([]string{"--no-pager", "log", "--oneline"}, args...)...)
+		return git("log", append([]string{"--oneline"}, args...)...)
 	case "changes":
-		return runner.Run("git", append([]string{"--no-pager", "diff"}, args...)...)
+		return git("diff", args...)
 	case "checkout", "goto":
 		return git("checkout", args...)
 	case "commit":
@@ -82,9 +82,9 @@ func dispatch(subcmd string, args []string) error {
 	case "diffedit":
 		return git("rebase", append([]string{"--interactive"}, args...)...)
 	case "diffs":
-		return runner.Run("git", append([]string{"--no-pager", "diff"}, args...)...)
+		return git("diff", args...)
 	case "diffstat":
-		return runner.Run("git", append([]string{"--no-pager", "diff", "--stat"}, args...)...)
+		return git("diff", append([]string{"--stat"}, args...)...)
 	case "drop":
 		if len(args) < 1 {
 			return fmt.Errorf("drop requires a commit argument")
@@ -108,7 +108,7 @@ func dispatch(subcmd string, args []string) error {
 	case "ignore":
 		return gitIgnore(args)
 	case "incoming":
-		return runner.Run("git", append([]string{"--no-pager", "log", "--oneline", "HEAD..@{upstream}"}, args...)...)
+		return git("log", append([]string{"--oneline", "HEAD..@{upstream}"}, args...)...)
 	case "lint":
 		return git("lint", args...)
 	case "map":
@@ -152,7 +152,7 @@ func dispatch(subcmd string, args []string) error {
 	case "rootdir":
 		return git("rootdir")
 	case "show":
-		return runner.Run("git", append([]string{"--no-pager", "show"}, args...)...)
+		return git("show", args...)
 	case "split":
 		return git("rebase", append([]string{"-i"}, args...)...)
 	case "squash":
@@ -180,8 +180,11 @@ func dispatch(subcmd string, args []string) error {
 	}
 }
 
+// git runs git with --no-pager prepended. vcs-git wraps git for predictable,
+// scriptable output across backends; pager interaction would interfere with
+// that. Callers that need a pager should invoke runner.Run directly.
 func git(cmd string, args ...string) error {
-	return runner.Run("git", append([]string{cmd}, args...)...)
+	return runner.Run("git", append([]string{"--no-pager", cmd}, args...)...)
 }
 
 func capture(name string, args ...string) (string, error) {
@@ -259,7 +262,7 @@ func gitBase(args []string) error {
 	if err := gitAtTip(); err != nil {
 		fmt.Print("(detached) ")
 	}
-	return runner.Run("git", append([]string{"--no-pager", "log", "-1", "--oneline", "--no-decorate"}, args...)...)
+	return git("log", append([]string{"-1", "--oneline", "--no-decorate"}, args...)...)
 }
 
 func gitMap(args []string) error {
@@ -270,7 +273,7 @@ func gitMap(args []string) error {
 }
 
 func gitOutgoing(args []string) error {
-	return runner.Run("git", append([]string{"--no-pager", "log", "--oneline", "@{upstream}..HEAD"}, args...)...)
+	return git("log", append([]string{"--oneline", "@{upstream}..HEAD"}, args...)...)
 }
 
 func gitBranch() error {
@@ -287,13 +290,13 @@ func gitBranch() error {
 func gitGraph(args []string) error {
 	format := "--pretty=format:%C(auto)%h%C(auto)%d %s"
 	if len(args) == 0 {
-		err := runner.Run("git", "--no-pager", "log", "--graph", format, "@{upstream}..HEAD")
+		err := git("log", "--graph", format, "@{upstream}..HEAD")
 		if err != nil {
-			return runner.Run("git", "--no-pager", "log", "--graph", format)
+			return git("log", "--graph", format)
 		}
 		return nil
 	}
-	return runner.Run("git", append([]string{"--no-pager", "log", "--graph", format}, args...)...)
+	return git("log", append([]string{"--graph", format}, args...)...)
 }
 
 func gitFetchtime() error {
@@ -359,9 +362,9 @@ func gitNext() error {
 }
 
 func gitPending(args []string) error {
-	err := runner.Run("git", append([]string{"--no-pager", "log", "--oneline", "@{upstream}..HEAD"}, args...)...)
+	err := git("log", append([]string{"--oneline", "@{upstream}..HEAD"}, args...)...)
 	if err != nil {
-		return runner.Run("git", append([]string{"status", "--short"}, args...)...)
+		return git("status", append([]string{"--short"}, args...)...)
 	}
 	return nil
 }
