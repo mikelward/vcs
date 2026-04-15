@@ -39,8 +39,12 @@ func isDryRunFlag(a string) bool {
 	return a == "-n" || a == "--dry-run" || a == "--simulate"
 }
 
+// jj runs jj with --no-pager prepended. jj pages nearly every command on a
+// TTY by default, which is annoying for the short-output commands vcs-jj
+// usually runs. Callers that truly need a pager should invoke runner.Run
+// directly.
 func jj(args ...string) error {
-	return runner.Run("jj", args...)
+	return runner.Run("jj", append([]string{"--no-pager"}, args...)...)
 }
 
 func capture(name string, args ...string) (string, error) {
@@ -148,7 +152,7 @@ func dispatch(subcmd string, args []string) error {
 	case "outgoing":
 		return jjOutgoing(args)
 	case "pending":
-		return jj(append([]string{"--no-pager", "log", "-r", "mutable() ~ empty()"}, args...)...)
+		return jj(append([]string{"log", "-r", "mutable() ~ empty()"}, args...)...)
 	case "pick":
 		return jj(append([]string{"duplicate"}, args...)...)
 	case "precommit":
@@ -217,7 +221,7 @@ func jjAtTip() error {
 
 func jjBase(args []string) error {
 	tmpl := `if(self.contained_in("@"), if(description.first_line(), "@ " ++ change_id.shortest() ++ " " ++ description.first_line() ++ "\n"), "* " ++ change_id.shortest() ++ " " ++ description.first_line() ++ "\n")`
-	return jj(append([]string{"--no-pager", "log", "--no-graph", "-r", "@|@-", "--template", tmpl}, args...)...)
+	return jj(append([]string{"log", "--no-graph", "-r", "@|@-", "--template", tmpl}, args...)...)
 }
 
 func jjMap(args []string) error {
@@ -228,7 +232,7 @@ func jjMap(args []string) error {
 }
 
 func jjOutgoing(args []string) error {
-	return jj(append([]string{"--no-pager", "log", "--no-graph", "-r", "mutable() ~ empty() ~ ancestors(remote_bookmarks())", "--template", `change_id.shortest() ++ " " ++ description.first_line() ++ "\n"`}, args...)...)
+	return jj(append([]string{"log", "--no-graph", "-r", "mutable() ~ empty() ~ ancestors(remote_bookmarks())", "--template", `change_id.shortest() ++ " " ++ description.first_line() ++ "\n"`}, args...)...)
 }
 
 func jjGraph(args []string) error {
