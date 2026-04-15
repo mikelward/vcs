@@ -75,8 +75,12 @@ func findHg() string {
 	return "hg"
 }
 
+// hg runs hg/chg with "--pager never" prepended. hg pages most read-output
+// commands on a TTY by default, which is intrusive for the short outputs
+// vcs-hg usually produces. Callers that need a pager should invoke
+// runner.Run directly.
 func hg(args ...string) error {
-	return runner.Run(hgCmd, args...)
+	return runner.Run(hgCmd, append([]string{"--pager", "never"}, args...)...)
 }
 
 func capture(name string, args ...string) (string, error) {
@@ -104,13 +108,13 @@ func dispatch(subcmd string, args []string) error {
 	case "amend":
 		return hg(append([]string{"amend"}, args...)...)
 	case "annotate":
-		return hg(append([]string{"--pager", "never", "annotate"}, args...)...)
+		return hg(append([]string{"annotate"}, args...)...)
 	case "at_tip":
 		return hgAtTip()
 	case "base":
-		return hg(append([]string{"--pager", "never", "log", "-r", ".", "--template", "{onelinesummary}\\n"}, args...)...)
+		return hg(append([]string{"log", "-r", ".", "--template", "{onelinesummary}\\n"}, args...)...)
 	case "blame":
-		return hg(append([]string{"--pager", "never", "blame"}, args...)...)
+		return hg(append([]string{"blame"}, args...)...)
 	case "branch":
 		return hg("branch")
 	case "branches":
@@ -120,9 +124,9 @@ func dispatch(subcmd string, args []string) error {
 	case "changed":
 		return hgChanged(args)
 	case "changelog":
-		return hg(append([]string{"--pager", "never", "log", "--template", "{onelinesummary}\\n"}, args...)...)
+		return hg(append([]string{"log", "--template", "{onelinesummary}\\n"}, args...)...)
 	case "changes":
-		return hg(append([]string{"--pager", "never", "diff"}, args...)...)
+		return hg(append([]string{"diff"}, args...)...)
 	case "checkout", "goto":
 		if subcmd == "goto" {
 			return hg(append([]string{"update"}, args...)...)
@@ -137,9 +141,9 @@ func dispatch(subcmd string, args []string) error {
 	case "diffedit":
 		return hg(append([]string{"histedit"}, args...)...)
 	case "diffs":
-		return hg(append([]string{"--pager", "never", "diff"}, args...)...)
+		return hg(append([]string{"diff"}, args...)...)
 	case "diffstat":
-		return hg(append([]string{"--pager", "never", "diff", "--stat"}, args...)...)
+		return hg(append([]string{"diff", "--stat"}, args...)...)
 	case "drop":
 		return hg(append([]string{"prune"}, args...)...)
 	case "evolve":
@@ -159,7 +163,7 @@ func dispatch(subcmd string, args []string) error {
 	case "ignore":
 		return hgIgnore(args)
 	case "incoming":
-		return hg(append([]string{"--pager", "never", "incoming", "--template", "{onelinesummary}\\n"}, args...)...)
+		return hg(append([]string{"incoming", "--template", "{onelinesummary}\\n"}, args...)...)
 	case "lint":
 		return hg(append([]string{"lint"}, args...)...)
 	case "map":
@@ -173,7 +177,7 @@ func dispatch(subcmd string, args []string) error {
 	case "outgoing":
 		return hgOutgoing(args)
 	case "pending":
-		return hg("--pager", "never", "status")
+		return hg("status")
 	case "pick":
 		return hg(append([]string{"graft"}, args...)...)
 	case "precommit":
@@ -204,13 +208,13 @@ func dispatch(subcmd string, args []string) error {
 	case "rootdir":
 		return hg("root")
 	case "show":
-		return hg(append([]string{"--pager", "never", "export"}, args...)...)
+		return hg(append([]string{"export"}, args...)...)
 	case "split":
 		return hg(append([]string{"split"}, args...)...)
 	case "squash":
 		return hg(append([]string{"fold"}, args...)...)
 	case "status":
-		return hg(append([]string{"--pager", "never", "status"}, args...)...)
+		return hg(append([]string{"status"}, args...)...)
 	case "submit":
 		return hg("submit")
 	case "submitforce":
@@ -258,7 +262,7 @@ func hgMap(args []string) error {
 }
 
 func hgOutgoing(args []string) error {
-	return hg(append([]string{"--pager", "never", "--quiet", "log", "-r", "draft() and not obsolete()", "--template", "{onelinesummary}\\n"}, args...)...)
+	return hg(append([]string{"--quiet", "log", "-r", "draft() and not obsolete()", "--template", "{onelinesummary}\\n"}, args...)...)
 }
 
 func hgChange(args []string) error {
@@ -320,9 +324,9 @@ func hgGraph(args []string) error {
 		// are visible. Without them, hg's graph renderer draws sibling drafts
 		// as if one were the parent of the other.
 		revset := "(draft() and not obsolete()) or parents(roots(draft() and not obsolete()))"
-		return hg("--pager", "never", "log", "--graph", "--template", "oneline", "-r", revset)
+		return hg("log", "--graph", "--template", "oneline", "-r", revset)
 	}
-	return hg(append([]string{"--pager", "never", "log", "--graph", "--template", "oneline"}, args...)...)
+	return hg(append([]string{"log", "--graph", "--template", "oneline"}, args...)...)
 }
 
 func hgIgnore(args []string) error {

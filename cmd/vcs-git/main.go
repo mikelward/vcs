@@ -60,7 +60,7 @@ func dispatch(subcmd string, args []string) error {
 	case "branch":
 		return gitBranch()
 	case "branches":
-		return git("branch", args...)
+		return runner.Run("git", append([]string{"--no-pager", "branch"}, args...)...)
 	case "change":
 		return git("commit", append([]string{"--amend"}, args...)...)
 	case "changed":
