@@ -234,7 +234,11 @@ func jjOutgoing(args []string) error {
 func jjGraph(args []string) error {
 	tmpl := `change_id.shortest() ++ " " ++ if(description, description.first_line(), "(no description set)") ++ if(bookmarks, " [" ++ bookmarks.join(", ") ++ "]", "") ++ "\n"`
 	if len(args) == 0 {
-		return jj("log", "--template", tmpl, "-r", "mutable() ~ empty() ~ ancestors(remote_bookmarks())")
+		// Include parents of the mutable roots so fork points (usually
+		// immutable or empty, and thus filtered out) are visible. Without
+		// them, sibling branches can render as disconnected sticks.
+		revset := "(mutable() ~ empty() ~ ancestors(remote_bookmarks())) | roots(mutable() ~ empty() ~ ancestors(remote_bookmarks()))-"
+		return jj("log", "--template", tmpl, "-r", revset)
 	}
 	return jj(append([]string{"log", "--template", tmpl}, args...)...)
 }

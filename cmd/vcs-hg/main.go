@@ -316,7 +316,11 @@ func hgFetchtime() error {
 
 func hgGraph(args []string) error {
 	if len(args) == 0 {
-		return hg("--pager", "never", "log", "--graph", "--template", "oneline", "-r", "draft() and not obsolete()")
+		// Include parents of the draft roots so fork points (usually public)
+		// are visible. Without them, hg's graph renderer draws sibling drafts
+		// as if one were the parent of the other.
+		revset := "(draft() and not obsolete()) or parents(roots(draft() and not obsolete()))"
+		return hg("--pager", "never", "log", "--graph", "--template", "oneline", "-r", revset)
 	}
 	return hg(append([]string{"--pager", "never", "log", "--graph", "--template", "oneline"}, args...)...)
 }

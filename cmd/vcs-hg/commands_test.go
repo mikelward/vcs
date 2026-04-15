@@ -80,14 +80,16 @@ func TestGraph(t *testing.T) {
 		t.Errorf("graph -l 2: %q", out)
 	}
 
-	// No args: only drafts. After clone the pulled rev is public, so only
-	// the new "graph test" commit (draft) should appear.
+	// No args: drafts plus their public fork-point. After clone the pulled
+	// rev is public; we want the draft "graph test" and its public parent
+	// "initial commit" (the fork point) so the graph renders branching
+	// structure correctly.
 	out, _ = runDispatch(t, local, "graph")
 	if !strings.Contains(out, "graph test") {
 		t.Errorf("graph should show draft: %q", out)
 	}
-	if strings.Contains(out, "initial commit") {
-		t.Errorf("graph should exclude public initial: %q", out)
+	if !strings.Contains(out, "initial commit") {
+		t.Errorf("graph should include public fork point: %q", out)
 	}
 }
 
