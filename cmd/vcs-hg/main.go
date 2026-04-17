@@ -187,7 +187,7 @@ func dispatch(subcmd string, args []string) error {
 	case "prev":
 		return hg(append([]string{"update", "-r", ".^"}, args...)...)
 	case "pull":
-		return hg(append([]string{"pull", "--update", "--rebase"}, args...)...)
+		return hgPull(args)
 	case "push":
 		return hg(append([]string{"push"}, args...)...)
 	case "rebase":
@@ -294,6 +294,44 @@ func hgReword(args []string) error {
 		return hg("commit", "--amend", "-e")
 	}
 	return hg(append([]string{"commit", "--amend"}, args...)...)
+}
+
+// hgPull translates the unified "pull" subcommand to "hg pull --update
+// --rebase". When commands.rebase.requiredest is set in the user's hg
+// configuration, hg refuses to rebase without an explicit destination,
+// so inject "-d last(public())" by default. Users can override the
+// destination by passing their own -d/--dest argument.
+func hgPull(args []string) error {
+	base := []string{"pull", "--update", "--rebase"}
+	if !hasRebaseDest(args) && hgRebaseRequireDest() {
+		args = append([]string{"-d", "last(public())"}, args...)
+	}
+	return hg(append(base, args...)...)
+}
+
+// hasRebaseDest reports whether args already contain a rebase destination
+// flag (-d, --dest, --dest=...).
+func hasRebaseDest(args []string) bool {
+	for _, a := range args {
+		if a == "-d" || a == "--dest" || strings.HasPrefix(a, "--dest=") {
+			return true
+		}
+	}
+	return false
+}
+
+// hgRebaseRequireDest reports whether the user's hg configuration sets
+// commands.rebase.requiredest to a true-ish value.
+func hgRebaseRequireDest() bool {
+	out, err := capture(hgCmd, "config", "commands.rebase.requiredest")
+	if err != nil {
+		return false
+	}
+	switch strings.TrimSpace(strings.ToLower(out)) {
+	case "true", "yes", "on", "1":
+		return true
+	}
+	return false
 }
 
 func hgFastforward() error {
