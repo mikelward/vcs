@@ -290,7 +290,12 @@ func gitBranch() error {
 func gitGraph(args []string) error {
 	format := "--pretty=format:%C(auto)%h%C(auto)%d %s"
 	if len(args) == 0 {
-		err := git("log", "--graph", format, "@{upstream}..HEAD")
+		// Show all local unpushed commits (across every branch plus the
+		// detached HEAD if any) together with their public fork points.
+		// Without --boundary and the "all local branches minus remotes"
+		// selection, a stacked chain renders as a disconnected stick and
+		// sibling branches vanish entirely, hiding the tree structure.
+		err := git("log", "--graph", "--boundary", format, "--branches", "HEAD", "--not", "--remotes")
 		if err != nil {
 			return git("log", "--graph", format)
 		}

@@ -123,13 +123,49 @@ func TestGraph(t *testing.T) {
 		t.Errorf("graph -2 missing parent: %q", out)
 	}
 
-	// No args shows outgoing only (unpushed head, not pushed initial).
+	// No args: unpushed commits plus the public fork point so the branch
+	// structure is visible. "initial commit" is the pushed fork point and
+	// should be drawn as a boundary commit.
 	out, _ = runDispatch(t, local, "graph")
 	if !strings.Contains(out, "graph test commit") {
 		t.Errorf("graph missing outgoing commit: %q", out)
 	}
-	if strings.Contains(out, "initial commit") {
-		t.Errorf("graph should omit pushed initial: %q", out)
+	if !strings.Contains(out, "initial commit") {
+		t.Errorf("graph should include public fork point: %q", out)
+	}
+}
+
+// TestGraphSiblings exercises the tree-rendering bug: with sibling branches
+// that fork from the public history, the graph must render them as a tree
+// (multiple branches connected through the shared fork point) rather than
+// hiding everything but the current branch.
+func TestGraphSiblings(t *testing.T) {
+	_, local := newGitRepo(t)
+
+	writeFile(t, local, "m.txt", "x")
+	gitRun(t, local, "add", "m.txt")
+	gitRun(t, local, "commit", "-m", "main work")
+
+	gitRun(t, local, "checkout", "-q", "-b", "feature", "HEAD~")
+	writeFile(t, local, "f.txt", "x")
+	gitRun(t, local, "add", "f.txt")
+	gitRun(t, local, "commit", "-m", "feature work")
+	gitRun(t, local, "checkout", "-q", "main")
+
+	out, _ := runDispatch(t, local, "graph")
+	if !strings.Contains(out, "main work") {
+		t.Errorf("graph missing current branch commit: %q", out)
+	}
+	if !strings.Contains(out, "feature work") {
+		t.Errorf("graph missing sibling branch commit: %q", out)
+	}
+	if !strings.Contains(out, "initial commit") {
+		t.Errorf("graph missing public fork point: %q", out)
+	}
+	// With two branches sharing a fork point the graph must draw a merge
+	// indicator ("|/"), otherwise it collapsed the tree into a stick.
+	if !strings.Contains(out, "|/") {
+		t.Errorf("graph should render branch structure, got stick: %q", out)
 	}
 }
 
