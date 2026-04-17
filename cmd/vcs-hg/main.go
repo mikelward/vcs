@@ -297,27 +297,15 @@ func hgReword(args []string) error {
 }
 
 // hgPull translates the unified "pull" subcommand to "hg pull --update
-// --rebase". When commands.rebase.requiredest is set in the user's hg
-// configuration, hg refuses to rebase without an explicit destination,
-// so inject "-d last(public())" by default. Users can override the
-// destination by passing their own -d/--dest argument.
+// --rebase". "hg pull --rebase" does not accept -d/--dest, so when the
+// user's hg config sets commands.rebase.requiredest the internal rebase
+// would abort; override that config for this invocation.
 func hgPull(args []string) error {
 	base := []string{"pull", "--update", "--rebase"}
-	if !hasRebaseDest(args) && hgRebaseRequireDest() {
-		args = append([]string{"-d", "last(public())"}, args...)
+	if hgRebaseRequireDest() {
+		base = append([]string{"--config", "commands.rebase.requiredest=no"}, base...)
 	}
 	return hg(append(base, args...)...)
-}
-
-// hasRebaseDest reports whether args already contain a rebase destination
-// flag (-d, --dest, --dest=...).
-func hasRebaseDest(args []string) bool {
-	for _, a := range args {
-		if a == "-d" || a == "--dest" || strings.HasPrefix(a, "--dest=") {
-			return true
-		}
-	}
-	return false
 }
 
 // hgRebaseRequireDest reports whether the user's hg configuration sets

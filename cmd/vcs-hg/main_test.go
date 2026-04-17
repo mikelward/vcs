@@ -19,23 +19,3 @@ func TestDispatchReturnsErrorForUnknown(t *testing.T) {
 		t.Error("expected error for unknown subcommand")
 	}
 }
-
-func TestHasRebaseDest(t *testing.T) {
-	cases := []struct {
-		args []string
-		want bool
-	}{
-		{nil, false},
-		{[]string{}, false},
-		{[]string{"--update"}, false},
-		{[]string{"-d", "tip"}, true},
-		{[]string{"--dest", "tip"}, true},
-		{[]string{"--dest=tip"}, true},
-		{[]string{"--update", "-d", "tip"}, true},
-	}
-	for _, c := range cases {
-		if got := hasRebaseDest(c.args); got != c.want {
-			t.Errorf("hasRebaseDest(%v) = %v, want %v", c.args, got, c.want)
-		}
-	}
-}
