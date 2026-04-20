@@ -449,3 +449,23 @@ func TestUnknown(t *testing.T) {
 		t.Errorf("unknown: %q", out)
 	}
 }
+
+// TestPullRequireDest ensures pull succeeds even when the user has set
+// commands.rebase.requiredest and commands.update.requiredest in their
+// hg config. With nothing to rebase, hg falls back to update, which would
+// otherwise abort with "you must specify a destination".
+func TestPullRequireDest(t *testing.T) {
+	_, local := newHgRepo(t)
+	// Enable both requiredest settings in the local repo's hgrc so the
+	// overrides in hgPull are the only thing keeping pull working.
+	hgrc := filepath.Join(local, ".hg", "hgrc")
+	body := "[commands]\n" +
+		"rebase.requiredest = True\n" +
+		"update.requiredest = True\n"
+	if err := os.WriteFile(hgrc, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runDispatch(t, local, "pull"); err != nil {
+		t.Fatalf("pull with requiredest set: %v", err)
+	}
+}

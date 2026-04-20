@@ -298,20 +298,25 @@ func hgReword(args []string) error {
 
 // hgPull translates the unified "pull" subcommand to "hg pull --update
 // --rebase". "hg pull --rebase" does not accept -d/--dest, so when the
-// user's hg config sets commands.rebase.requiredest the internal rebase
-// would abort; override that config for this invocation.
+// user's hg config sets commands.rebase.requiredest or
+// commands.update.requiredest the internal rebase or the fallback update
+// (used when there is nothing to rebase) would abort with "you must
+// specify a destination"; override both configs for this invocation.
 func hgPull(args []string) error {
 	base := []string{"pull", "--update", "--rebase"}
-	if hgRebaseRequireDest() {
+	if hgConfigBool("commands.update.requiredest") {
+		base = append([]string{"--config", "commands.update.requiredest=no"}, base...)
+	}
+	if hgConfigBool("commands.rebase.requiredest") {
 		base = append([]string{"--config", "commands.rebase.requiredest=no"}, base...)
 	}
 	return hg(append(base, args...)...)
 }
 
-// hgRebaseRequireDest reports whether the user's hg configuration sets
-// commands.rebase.requiredest to a true-ish value.
-func hgRebaseRequireDest() bool {
-	out, err := capture(hgCmd, "config", "commands.rebase.requiredest")
+// hgConfigBool reports whether the named hg config key is set to a
+// true-ish value in the user's configuration.
+func hgConfigBool(key string) bool {
+	out, err := capture(hgCmd, "config", key)
 	if err != nil {
 		return false
 	}
