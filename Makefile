@@ -9,32 +9,20 @@ endif
 
 SOURCES = $(shell find . -name '*.go' -not -name '*_test.go')
 
-# Build metadata injected into the version package via -ldflags.
-# Overridable on the command line (e.g. `make VERSION=v1.2.3`).
-VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-COMMIT     ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
-BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-
-VERSION_PKG = github.com/mikelward/vcs/version
-LDFLAGS = -X $(VERSION_PKG).Version=$(VERSION) \
-          -X $(VERSION_PKG).Commit=$(COMMIT) \
-          -X $(VERSION_PKG).BuildDate=$(BUILD_DATE)
-GO_BUILD = go build -ldflags '$(LDFLAGS)'
-
 all: $(BINARIES)
 
 # Real file targets so Make skips the build when sources are unchanged.
 vcs: $(SOURCES)
-	$(GO_BUILD) -o $@ ./cmd/vcs
+	go build -o $@ ./cmd/vcs
 
 vcs-git: $(SOURCES)
-	$(GO_BUILD) -o $@ ./cmd/vcs-git
+	go build -o $@ ./cmd/vcs-git
 
 vcs-hg: $(SOURCES)
-	$(GO_BUILD) -o $@ ./cmd/vcs-hg
+	go build -o $@ ./cmd/vcs-hg
 
 vcs-jj: $(SOURCES)
-	$(GO_BUILD) -o $@ ./cmd/vcs-jj
+	go build -o $@ ./cmd/vcs-jj
 
 test:
 	go test ./...
