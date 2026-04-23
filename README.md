@@ -46,6 +46,7 @@ vcs-hg --hg-path=/usr/bin/chg log
 | `--hg-path=PATH` | Path to `hg` or `chg` binary (passed through to `vcs-hg`). Useful for callers that cache the lookup. |
 | `-n`, `--dry-run`, `--simulate` | Print the underlying VCS command to stderr instead of running it. Must appear before the subcommand. Can also be toggled via the `VCS_DRY_RUN` environment variable. |
 | `--list-commands` | Print all supported subcommand names, one per line. Useful for shell integration (see below). |
+| `--version`, `-V` | Print the version, git commit, and build date on one line and exit. |
 
 Example:
 
@@ -65,6 +66,7 @@ $ vcs -n commit -m "fix bug"
 | `prompt-info` | Print all prompt info (project, subdir, branch, status, fetch_stale) in one invocation. See `--format`, `--color`. |
 | `prompt-line` | Print the full preprompt first line (hostname, shpool tag, directory/VCS info, auth warning) in one invocation. See `--hostname`, `--production`, `--shpool`, `--color`, `--no-ssh`. |
 | `clearcache` | Remove `.vcs_cache` files under the current directory. |
+| `version` | Print the version, git commit, and build date on separate lines. |
 
 ## Commands
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mikelward/vcs/runner"
 	"github.com/mikelward/vcs/vcsdetect"
+	"github.com/mikelward/vcs/version"
 )
 
 func main() {
@@ -24,12 +25,21 @@ func main() {
 		listCommands()
 		return
 	}
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "-V") {
+		fmt.Println(version.String("vcs-jj"))
+		return
+	}
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: vcs-jj [-n|--dry-run] <subcommand> [args...]")
 		os.Exit(1)
 	}
 	subcmd := args[0]
 	subArgs := args[1:]
+
+	if subcmd == "version" {
+		fmt.Println(version.Multiline("vcs-jj"))
+		return
+	}
 
 	err := dispatch(subcmd, subArgs)
 	os.Exit(runner.ExitCode(err))

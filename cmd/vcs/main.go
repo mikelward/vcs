@@ -22,6 +22,7 @@
 //	prompt-info Print all prompt info in one invocation (see --format, --color).
 //	prompt-line Print the full preprompt first line (host + dir + auth).
 //	clearcache  Remove .vcs_cache files under the current directory.
+//	version     Print the vcs version, git commit, and build date.
 package main
 
 import (
@@ -35,6 +36,7 @@ import (
 	"github.com/mikelward/vcs/promptinfo"
 	"github.com/mikelward/vcs/promptline"
 	"github.com/mikelward/vcs/vcsdetect"
+	"github.com/mikelward/vcs/version"
 )
 
 func main() {
@@ -64,6 +66,9 @@ func main() {
 		} else if a == "-n" || a == "--dry-run" || a == "--simulate" {
 			dryRun = true
 			i++
+		} else if a == "--version" || a == "-V" {
+			fmt.Println(version.String("vcs"))
+			return
 		} else {
 			passthrough = args[i:]
 			break
@@ -126,6 +131,9 @@ func main() {
 		return
 	case "clearcache":
 		clearCache()
+		return
+	case "version":
+		fmt.Println(version.Multiline("vcs"))
 		return
 	}
 
