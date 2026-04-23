@@ -47,14 +47,18 @@ func Read() Info {
 }
 
 // String returns a one-line summary suitable for "--version" output.
-func String(name string) string {
-	i := Read()
-	return fmt.Sprintf("%s %s (commit %s, built %s)", name, i.Version, i.Commit, i.Date)
-}
+func String(name string) string { return Read().Line(name) }
 
 // Multiline returns a multi-line "name: value" summary suitable for a
 // dedicated `version` subcommand.
-func Multiline(name string) string {
-	i := Read()
+func Multiline(name string) string { return Read().Block(name) }
+
+// Line formats the receiver as a one-line summary.
+func (i Info) Line(name string) string {
+	return fmt.Sprintf("%s %s (commit %s, built %s)", name, i.Version, i.Commit, i.Date)
+}
+
+// Block formats the receiver as a multi-line "name: value" summary.
+func (i Info) Block(name string) string {
 	return fmt.Sprintf("%s\nversion: %s\ncommit:  %s\nbuilt:   %s", name, i.Version, i.Commit, i.Date)
 }
