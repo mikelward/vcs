@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/mikelward/vcs/runner"
+	"github.com/mikelward/vcs/version"
 )
 
 // hgCmd is the resolved path to hg or chg.
@@ -46,6 +47,14 @@ doneFlags:
 
 	if len(args) > 0 && args[0] == "--list-commands" {
 		listCommands()
+		return
+	}
+	if len(args) > 0 && (args[0] == "--version" || args[0] == "-V") {
+		fmt.Println(version.String("vcs-hg"))
+		return
+	}
+	if len(args) > 0 && args[0] == "version" {
+		fmt.Println(version.Multiline("vcs-hg"))
 		return
 	}
 
