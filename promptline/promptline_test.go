@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mikelward/vcs/vcsdetect"
 )
@@ -321,6 +322,147 @@ func startFakeAgentRaw(t *testing.T, handle func(net.Conn)) string {
 		}
 	}()
 	return path
+}
+
+func TestAuthCacheRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth_cache")
+
+	// Missing cache: no hit.
+	if w, hit := readAuthCache(path, time.Minute); hit || w != "" {
+		t.Errorf("missing cache should miss; got warning=%q hit=%v", w, hit)
+	}
+
+	// Write empty (auth OK), read back.
+	writeAuthCache(path, "")
+	if w, hit := readAuthCache(path, time.Minute); !hit || w != "" {
+		t.Errorf(`after writeAuthCache(""): got warning=%q hit=%v, want "" true`, w, hit)
+	}
+	// Empty file on disk matches shell convention.
+	if data, err := os.ReadFile(path); err != nil {
+		t.Fatalf("read: %v", err)
+	} else if len(data) != 0 {
+		t.Errorf("ok cache file should be empty; got %q", data)
+	}
+
+	// Overwrite with a warning.
+	writeAuthCache(path, "SSH")
+	if w, hit := readAuthCache(path, time.Minute); !hit || w != "SSH" {
+		t.Errorf(`after writeAuthCache("SSH"): got warning=%q hit=%v, want "SSH" true`, w, hit)
+	}
+}
+
+func TestAuthCacheStale(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "auth_cache")
+	writeAuthCache(path, "")
+
+	// Backdate mtime by an hour.
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	if _, hit := readAuthCache(path, time.Minute); hit {
+		t.Error("stale cache should miss")
+	}
+}
+
+// TestAuthCacheShellFormat verifies the cache file can be authored by the
+// shell (empty == ok, any content == warning text) and the Go reader will
+// honour it. Also covers the warning-without-newline case the shell may emit.
+func TestAuthCacheShellFormat(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"shell empty file (ok)", "", ""},
+		{"shell SSH with newline", "SSH\n", "SSH"},
+		{"shell SSH no newline", "SSH", "SSH"},
+		{"arbitrary warning text", "agent\n", "agent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "auth_cache")
+			if err := os.WriteFile(path, []byte(tt.content), 0600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			got, hit := readAuthCache(path, time.Minute)
+			if !hit {
+				t.Fatalf("expected cache hit for %q", tt.content)
+			}
+			if got != tt.want {
+				t.Errorf("readAuthCache(%q) = %q, want %q", tt.content, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAuthCacheConfigDefaults(t *testing.T) {
+	home := t.TempDir()
+	path, ttl := authCacheConfig(&Options{HomeDir: home})
+	if want := filepath.Join(home, DefaultAuthCacheName); path != want {
+		t.Errorf("default path = %q, want %q", path, want)
+	}
+	if ttl != DefaultAuthCacheTTL {
+		t.Errorf("default ttl = %v, want %v", ttl, DefaultAuthCacheTTL)
+	}
+}
+
+func TestAuthCacheConfigDisabled(t *testing.T) {
+	if p, _ := authCacheConfig(&Options{AuthCachePath: "-", HomeDir: "/x"}); p != "" {
+		t.Errorf(`AuthCachePath="-" should disable, got %q`, p)
+	}
+	if p, _ := authCacheConfig(&Options{AuthCacheTTL: -1, HomeDir: "/x"}); p != "" {
+		t.Errorf("negative TTL should disable, got %q", p)
+	}
+}
+
+// TestBuildAuthCacheHit verifies Build consults the cache without dialing
+// the agent. We point SSH_AUTH_SOCK at a nonexistent path and seed the cache
+// with "ok"; a cache hit means no warning even though no real agent exists.
+func TestBuildAuthCacheHit(t *testing.T) {
+	home := t.TempDir()
+	cachePath := filepath.Join(home, DefaultAuthCacheName)
+	writeAuthCache(cachePath, "")
+
+	// Ensure any real agent dial would fail.
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "nope.sock"))
+
+	tmp := t.TempDir()
+	got := Build(&Options{
+		Hostname: "host",
+		Shpool:   "sess",
+		NoVCS:    true,
+		Cwd:      tmp,
+		HomeDir:  home,
+	})
+	if strings.Contains(got, "SSH") {
+		t.Errorf("cached ok should suppress warning; got %q", got)
+	}
+}
+
+func TestBuildAuthCacheMissAgentDown(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("SSH_AUTH_SOCK", filepath.Join(t.TempDir(), "nope.sock"))
+
+	tmp := t.TempDir()
+	got := Build(&Options{
+		Hostname: "host",
+		Shpool:   "sess",
+		NoVCS:    true,
+		Cwd:      tmp,
+		HomeDir:  home,
+	})
+	if !strings.HasSuffix(got, " SSH") {
+		t.Errorf("no cache + no agent should emit SSH warning; got %q", got)
+	}
+	// The miss should have populated the cache with the warning text.
+	if w, hit := readAuthCache(filepath.Join(home, DefaultAuthCacheName), time.Minute); !hit || w != "SSH" {
+		t.Errorf(`expected cache populated with "SSH"; got warning=%q hit=%v`, w, hit)
+	}
 }
 
 // initGitRepo creates a temp git repo with signing disabled and one commit.
