@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"github.com/mikelward/vcs/runner"
 
 	vcs "github.com/mikelward/vcs"
 )
@@ -477,5 +478,23 @@ func TestPullRequireDest(t *testing.T) {
 	}
 	if _, err := runDispatch(t, local, "pull"); err != nil {
 		t.Fatalf("pull with requiredest set: %v", err)
+	}
+}
+
+func TestFix(t *testing.T) {
+	_, local := newHgRepo(t)
+	writeFile(t, local, "test.go", "package main\nfunc main() {\n}\n")
+	hgRun(t, local, "add", "test.go")
+
+	old := runner.DryRun
+	runner.DryRun = true
+	defer func() { runner.DryRun = old }()
+
+	out, err := runDispatch(t, local, "fix")
+	if err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	if !strings.Contains(out, "hg") || !strings.Contains(out, "fix") {
+		t.Errorf("fix output missing expected command; got: %q", out)
 	}
 }

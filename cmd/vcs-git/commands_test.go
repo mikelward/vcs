@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"github.com/mikelward/vcs/runner"
 
 	vcs "github.com/mikelward/vcs"
 )
@@ -907,5 +908,47 @@ func TestUploadchainDispatch(t *testing.T) {
 	}
 	if !strings.Contains(readLog(t, ghLog), "pr create") {
 		t.Errorf("uploadchain should create PR")
+	}
+}
+
+func TestFix(t *testing.T) {
+	_, local := newGitRepo(t)
+	writeFile(t, local, "test.go", "package main\nfunc main() {\n}\n")
+	gitRun(t, local, "add", "test.go")
+
+	old := runner.DryRun
+	runner.DryRun = true
+	defer func() { runner.DryRun = old }()
+
+	out, err := runDispatch(t, local, "fix")
+	if err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	if !strings.Contains(out, "git") || !strings.Contains(out, "fix") {
+		t.Errorf("fix output missing expected command; got: %q", out)
+	}
+}
+
+func TestFixHook(t *testing.T) {
+	_, local := newGitRepo(t)
+	writeFile(t, local, "test.go", "package main\nfunc main() {\n}\n")
+	gitRun(t, local, "add", "test.go")
+
+	// Create a dummy hook
+	hookPath := filepath.Join(local, ".git", "hooks", "fix")
+	os.MkdirAll(filepath.Dir(hookPath), 0755)
+	writeFile(t, local, ".git/hooks/fix", "#!/bin/sh\necho 'fixing!'\n")
+	os.Chmod(hookPath, 0755)
+
+	old := runner.DryRun
+	runner.DryRun = true
+	defer func() { runner.DryRun = old }()
+
+	out, err := runDispatch(t, local, "fix")
+	if err != nil {
+		t.Fatalf("fix with hook: %v", err)
+	}
+	if !strings.Contains(out, ".git/hooks/fix") {
+		t.Errorf("fix output missing expected hook command; got: %q", out)
 	}
 }

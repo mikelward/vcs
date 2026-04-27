@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"github.com/mikelward/vcs/runner"
 
 	vcs "github.com/mikelward/vcs"
 )
@@ -528,5 +529,23 @@ func TestUploadUploadchain(t *testing.T) {
 	}
 	if !strings.Contains(readLog(t, jjLog), "git push") {
 		t.Errorf("uploadchain git backend should jj git push: %q", readLog(t, jjLog))
+	}
+}
+
+func TestFix(t *testing.T) {
+	local := newJJRepo(t)
+	writeFile(t, local, "test.go", "package main\nfunc main() {\n}\n")
+	// jj doesn't need 'add' usually, it tracks everything.
+
+	old := runner.DryRun
+	runner.DryRun = true
+	defer func() { runner.DryRun = old }()
+
+	out, err := runDispatch(t, local, "fix")
+	if err != nil {
+		t.Fatalf("fix: %v", err)
+	}
+	if !strings.Contains(out, "jj") || !strings.Contains(out, "fix") {
+		t.Errorf("fix output missing expected command; got: %q", out)
 	}
 }

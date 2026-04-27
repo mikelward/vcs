@@ -108,7 +108,7 @@ func dispatch(subcmd string, args []string) error {
 	case "fetchtime":
 		return gitFetchtime()
 	case "fix":
-		return git("fix", args...)
+		return gitFix(args)
 	case "graft":
 		return git("cherry-pick", args...)
 	case "graph":
@@ -452,4 +452,16 @@ func gitCopy(args []string) error {
 		return err
 	}
 	return runner.Run("git", "add", args[len(args)-1])
+}
+
+func gitFix(args []string) error {
+	gitDir, err := capture("git", "rev-parse", "--git-dir")
+	if err == nil {
+		script := gitDir + "/hooks/fix"
+		fi, err := os.Stat(script)
+		if err == nil && fi.Mode()&0111 != 0 {
+			return runner.Run(script, args...)
+		}
+	}
+	return git("fix", args...)
 }
