@@ -456,13 +456,23 @@ func TestUnknown(t *testing.T) {
 // otherwise abort with "you must specify a destination".
 func TestPullRequireDest(t *testing.T) {
 	_, local := newHgRepo(t)
-	// Enable both requiredest settings in the local repo's hgrc so the
-	// overrides in hgPull are the only thing keeping pull working.
+	// Append both requiredest settings to the local repo's hgrc so the
+	// overrides in hgPull are the only thing keeping pull working. Append
+	// rather than overwrite to preserve the [paths] default written by
+	// hg clone.
 	hgrc := filepath.Join(local, ".hg", "hgrc")
-	body := "[commands]\n" +
+	f, err := os.OpenFile(hgrc, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "\n[commands]\n" +
 		"rebase.requiredest = True\n" +
 		"update.requiredest = True\n"
-	if err := os.WriteFile(hgrc, []byte(body), 0644); err != nil {
+	if _, err := f.WriteString(body); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runDispatch(t, local, "pull"); err != nil {

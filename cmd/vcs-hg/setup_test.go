@@ -35,7 +35,9 @@ func TestMain(m *testing.M) {
 		"onelinesummary = \"{shortnode} {shortdesc}\"\n" +
 		"oneline = \"{shortnode} {shortdesc}\\n\"\n" +
 		"[ui]\n" +
-		"username = Test User <test@example.com>\n"
+		"username = Test User <test@example.com>\n" +
+		"[extensions]\n" +
+		"rebase =\n"
 	os.WriteFile(hgrc, []byte(body), 0644)
 	os.Setenv("HGRCPATH", hgrc)
 
