@@ -10,7 +10,12 @@ import (
 	"testing"
 )
 
+var jjAvailable bool
+
 func TestMain(m *testing.M) {
+	_, jjErr := exec.LookPath("jj")
+	jjAvailable = jjErr == nil
+
 	dir, err := os.MkdirTemp("", "vcs-jj-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "setup: MkdirTemp:", err)
@@ -73,6 +78,9 @@ func runDispatch(t *testing.T, dir, subcmd string, args ...string) (string, erro
 
 func jjRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	if !jjAvailable {
+		t.Skip("jj executable not found in PATH")
+	}
 	cmd := exec.Command("jj", args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -83,6 +91,9 @@ func jjRun(t *testing.T, dir string, args ...string) {
 
 func jjOut(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	if !jjAvailable {
+		t.Skip("jj executable not found in PATH")
+	}
 	cmd := exec.Command("jj", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -104,6 +115,9 @@ func writeFile(t *testing.T, dir, name, content string) {
 // newJJRepo creates a colocated jj+git repo and configures a test user.
 func newJJRepo(t *testing.T) string {
 	t.Helper()
+	if !jjAvailable {
+		t.Skip("jj executable not found in PATH")
+	}
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
 	cmd := exec.Command("jj", "git", "init", repo)

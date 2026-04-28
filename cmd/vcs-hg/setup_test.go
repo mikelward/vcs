@@ -10,10 +10,15 @@ import (
 	"testing"
 )
 
+var hgAvailable bool
+
 // TestMain isolates test runs so destructive commands can't touch the real
 // repository the tests are invoked from, and points HGRCPATH at a test hgrc
 // that declares the oneline templates vcs-hg relies on.
 func TestMain(m *testing.M) {
+	_, hgErr := exec.LookPath("hg")
+	hgAvailable = hgErr == nil
+
 	dir, err := os.MkdirTemp("", "vcs-hg-test-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "setup: MkdirTemp:", err)
@@ -95,6 +100,9 @@ func runDispatch(t *testing.T, dir, subcmd string, args ...string) (string, erro
 
 func hgRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
+	if !hgAvailable {
+		t.Skip("hg executable not found in PATH")
+	}
 	cmd := exec.Command(hgCmd, args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
@@ -105,6 +113,9 @@ func hgRun(t *testing.T, dir string, args ...string) {
 
 func hgOut(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	if !hgAvailable {
+		t.Skip("hg executable not found in PATH")
+	}
 	cmd := exec.Command(hgCmd, args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
@@ -127,6 +138,9 @@ func writeFile(t *testing.T, dir, name, content string) {
 // local. Returns (remote, local).
 func newHgRepo(t *testing.T) (remote, local string) {
 	t.Helper()
+	if !hgAvailable {
+		t.Skip("hg executable not found in PATH")
+	}
 	root := t.TempDir()
 	remote = filepath.Join(root, "remote")
 	local = filepath.Join(root, "local")
