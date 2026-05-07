@@ -135,7 +135,7 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 
 | Command | Description | Git | Hg | Jj |
 |---------|-------------|-----|----|----|
-| `pull` | Fetch and update | `git pull --rebase` | `hg pull --update --rebase` | `jj git fetch` / `jj sync` |
+| `pull` | Fetch and update | `git pull --rebase --log` | `hg pull --update --rebase` | `jj git fetch` / `jj sync` |
 | `push` | Push changes | `git push` | `hg push` | `jj git push` / `jj upload` |
 | `fastforward` | Fast-forward only | `git pull --ff-only` | `hg sync --tool=internal:fail` | `jj git fetch` |
 | `incoming` | Show what would be pulled | `git log HEAD..@{upstream}` | `hg incoming` | `jj op log` |
