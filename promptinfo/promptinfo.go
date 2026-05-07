@@ -249,7 +249,7 @@ func parseHgSummary(out string, needStatus bool) (status string, behind bool, ha
 		switch {
 		case strings.HasPrefix(line, "commit:"):
 			commit := strings.TrimSpace(strings.TrimPrefix(line, "commit:"))
-			if needStatus && commit != "(clean)" {
+			if needStatus && !hgSummaryCommitClean(commit) {
 				status = "*"
 			}
 		case strings.HasPrefix(line, "update:"):
@@ -261,6 +261,10 @@ func parseHgSummary(out string, needStatus bool) (status string, behind bool, ha
 		}
 	}
 	return status, behind, hasUpstream
+}
+
+func hgSummaryCommitClean(commit string) bool {
+	return commit == "(clean)" || strings.HasPrefix(commit, "(clean) ")
 }
 
 func fetchHeadPath(info *vcsdetect.Info) string {
