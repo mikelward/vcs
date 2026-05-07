@@ -605,6 +605,22 @@ func TestGatherHGBehindUpstream(t *testing.T) {
 	}
 }
 
+func TestParseHgSummaryCleanSecretPhase(t *testing.T) {
+	out := "parent: 0:0123456789ab tip\ncommit: (clean) (secret)\nupdate: (current)\n"
+
+	status, behind, hasUpstream := parseHgSummary(out, true)
+
+	if status != "" {
+		t.Errorf("Status = %q, want empty for clean secret-phase summary", status)
+	}
+	if behind {
+		t.Error("Behind should be false when hg summary reports current")
+	}
+	if !hasUpstream {
+		t.Error("HasUpstream should be true when hg summary reports update state")
+	}
+}
+
 func TestGatherHGNotBehind(t *testing.T) {
 	hgPath := testHgPath(t)
 	_, local := initHgRepoWithRemote(t, hgPath)
