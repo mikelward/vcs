@@ -1,9 +1,13 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/mikelward/vcs/runner"
 )
 
 func TestClearCache(t *testing.T) {
@@ -110,5 +114,53 @@ func TestDetectDirNoArgs(t *testing.T) {
 func TestDetectDirMissing(t *testing.T) {
 	if _, err := detectDir([]string{"/nonexistent/path/xyzzy"}); err == nil {
 		t.Error("expected error for missing path")
+	}
+}
+
+// TestAutoFetchCmdStripsHgPathPrefix covers the regression where
+// main()'s flag parser stores --hg-path as the literal flag string
+// (`--hg-path=PATH`) for passthrough to vcs-hg, but autoFetchCmd
+// previously forwarded that string into autofetch.Options.HgPath,
+// which expects just the path. dispatch() would then try to spawn
+// a binary literally named `--hg-path=PATH`. We exercise the strip
+// via dry-run so detachedSpawn calls runner.PrintCommand instead of
+// forking, and verify the printed command names the bare path.
+func TestAutoFetchCmdStripsHgPathPrefix(t *testing.T) {
+	prevDry := runner.DryRun
+	runner.DryRun = true
+	t.Cleanup(func() { runner.DryRun = prevDry })
+
+	// Fake hg repo: vcs detect keys off the .hg directory and an
+	// empty .hg/store/ is enough for the dispatch path to fire.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".hg", "store"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(cwd) })
+
+	// Capture stderr (runner.PrintCommand writes there).
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevStderr := os.Stderr
+	os.Stderr = w
+
+	autoFetchCmd("", "--hg-path=/usr/local/bin/chg", nil)
+
+	w.Close()
+	os.Stderr = prevStderr
+	out, _ := io.ReadAll(r)
+	got := string(out)
+
+	if !strings.Contains(got, "/usr/local/bin/chg") {
+		t.Errorf("dry-run output missing bare hg path; got %q", got)
+	}
+	if strings.Contains(got, "--hg-path=") {
+		t.Errorf("dry-run output still contains --hg-path= prefix; got %q", got)
 	}
 }

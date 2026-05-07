@@ -1,0 +1,478 @@
+package autofetch
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mikelward/vcs/runner"
+)
+
+// recordingSpawn returns a Spawn func that records every call into
+// the given slice and a never-fails handler. Tests inspect the
+// recorder to verify dispatch decisions without forking real VCS
+// binaries.
+type spawnCall struct {
+	name string
+	args []string
+}
+
+func recordingSpawn() (*[]spawnCall, func(string, []string) error) {
+	var calls []spawnCall
+	return &calls, func(name string, args []string) error {
+		calls = append(calls, spawnCall{name, append([]string(nil), args...)})
+		return nil
+	}
+}
+
+// touchOld writes path with the given mtime. Helper for setting up
+// stale/fresh markers in tests.
+func touchOld(t *testing.T, path string, mtime time.Time) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// makeRepo creates a directory with the given marker subpath laid
+// down and returns the repo root. layoutDirs lets a caller create
+// extra empty dirs (used to force colocated jj layouts via .git/).
+func makeRepo(t *testing.T, layoutDirs ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, d := range layoutDirs {
+		if err := os.MkdirAll(filepath.Join(root, d), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestRunNotInRepo(t *testing.T) {
+	dir := t.TempDir()
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{Cwd: dir, Spawn: spawn})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionNotInRepo {
+		t.Errorf("action = %v, want ActionNotInRepo", action)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("got %d spawn calls, want 0", len(*calls))
+	}
+}
+
+func TestRunGitStaleSpawnsFetch(t *testing.T) {
+	root := makeRepo(t, ".git")
+	// No FETCH_HEAD: counts as stale (initial fetch case).
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{Cwd: root, Spawn: spawn})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched", action)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("got %d spawn calls, want 1", len(*calls))
+	}
+	got := (*calls)[0]
+	if got.name != "git" {
+		t.Errorf("spawn name = %q, want %q", got.name, "git")
+	}
+	wantArgs := []string{"-C", root, "fetch", "--quiet"}
+	if !equalArgs(got.args, wantArgs) {
+		t.Errorf("spawn args = %v, want %v", got.args, wantArgs)
+	}
+}
+
+func TestRunGitFreshSkipsFetch(t *testing.T) {
+	root := makeRepo(t, ".git")
+	// FETCH_HEAD touched 1 minute ago — well within the default 1h gate.
+	now := time.Now()
+	touchOld(t, filepath.Join(root, ".git", "FETCH_HEAD"), now.Add(-1*time.Minute))
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:   root,
+		Spawn: spawn,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFresh {
+		t.Errorf("action = %v, want ActionFresh", action)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("got %d spawn calls, want 0", len(*calls))
+	}
+}
+
+func TestRunGitStaleSpawnsAfterMaxAge(t *testing.T) {
+	root := makeRepo(t, ".git")
+	now := time.Now()
+	// Marker is 2h old; default MaxAge is 1h.
+	touchOld(t, filepath.Join(root, ".git", "FETCH_HEAD"), now.Add(-2*time.Hour))
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:   root,
+		Spawn: spawn,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched", action)
+	}
+	if len(*calls) != 1 {
+		t.Errorf("got %d spawn calls, want 1", len(*calls))
+	}
+}
+
+func TestRunCustomMaxAge(t *testing.T) {
+	root := makeRepo(t, ".git")
+	now := time.Now()
+	// Marker is 2 minutes old; MaxAge is 1 minute, so it's stale.
+	touchOld(t, filepath.Join(root, ".git", "FETCH_HEAD"), now.Add(-2*time.Minute))
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:    root,
+		Spawn:  spawn,
+		MaxAge: 1 * time.Minute,
+		Now:    func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched (1min max-age, 2min-old marker)", action)
+	}
+	if len(*calls) != 1 {
+		t.Errorf("got %d spawn calls, want 1", len(*calls))
+	}
+}
+
+func TestRunHgStaleSpawnsPull(t *testing.T) {
+	root := makeRepo(t, ".hg/store")
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{Cwd: root, Spawn: spawn})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched", action)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("got %d spawn calls, want 1", len(*calls))
+	}
+	got := (*calls)[0]
+	if got.name != "hg" {
+		t.Errorf("spawn name = %q, want %q", got.name, "hg")
+	}
+	wantArgs := []string{"-R", root, "pull", "--quiet"}
+	if !equalArgs(got.args, wantArgs) {
+		t.Errorf("spawn args = %v, want %v", got.args, wantArgs)
+	}
+}
+
+func TestRunHgFreshSkipsPull(t *testing.T) {
+	root := makeRepo(t, ".hg/store")
+	now := time.Now()
+	touchOld(t, filepath.Join(root, ".hg", "store", "00changelog.i"), now.Add(-1*time.Minute))
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:   root,
+		Spawn: spawn,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFresh {
+		t.Errorf("action = %v, want ActionFresh", action)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("got %d spawn calls, want 0", len(*calls))
+	}
+}
+
+func TestRunHgUsesCustomPath(t *testing.T) {
+	root := makeRepo(t, ".hg/store")
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:    root,
+		Spawn:  spawn,
+		HgPath: "/usr/local/bin/chg",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched", action)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("got %d spawn calls, want 1", len(*calls))
+	}
+	if (*calls)[0].name != "/usr/local/bin/chg" {
+		t.Errorf("spawn name = %q, want %q", (*calls)[0].name, "/usr/local/bin/chg")
+	}
+}
+
+// jj non-colocated: only .jj/ exists; marker lives under
+// .jj/repo/store/git/FETCH_HEAD.
+func TestRunJJNonColocatedStale(t *testing.T) {
+	root := makeRepo(t, ".jj/repo/store/git")
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{Cwd: root, Spawn: spawn})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched", action)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("got %d spawn calls, want 1", len(*calls))
+	}
+	got := (*calls)[0]
+	if got.name != "jj" {
+		t.Errorf("spawn name = %q, want %q", got.name, "jj")
+	}
+	wantArgs := []string{"--repository", root, "git", "fetch", "--quiet"}
+	if !equalArgs(got.args, wantArgs) {
+		t.Errorf("spawn args = %v, want %v", got.args, wantArgs)
+	}
+}
+
+func TestRunJJNonColocatedFresh(t *testing.T) {
+	root := makeRepo(t, ".jj/repo/store/git")
+	now := time.Now()
+	touchOld(t, filepath.Join(root, ".jj", "repo", "store", "git", "FETCH_HEAD"), now.Add(-1*time.Minute))
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:   root,
+		Spawn: spawn,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFresh {
+		t.Errorf("action = %v, want ActionFresh", action)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("got %d spawn calls, want 0", len(*calls))
+	}
+}
+
+// jj colocated: both .jj/ and .git/ exist at root. `jj git fetch`
+// writes to .git/FETCH_HEAD, so the gate must read from there. Verify
+// by simultaneously backdating the non-colocated marker and freshening
+// the colocated one — Run must skip (proving it consulted the
+// colocated path, not the stale non-colocated one).
+func TestRunJJColocatedFresh(t *testing.T) {
+	root := makeRepo(t, ".jj/repo/store/git", ".git")
+	now := time.Now()
+	// Colocated marker: fresh.
+	touchOld(t, filepath.Join(root, ".git", "FETCH_HEAD"), now.Add(-1*time.Minute))
+	// Non-colocated marker: very stale, shouldn't matter.
+	touchOld(t, filepath.Join(root, ".jj", "repo", "store", "git", "FETCH_HEAD"), now.Add(-48*time.Hour))
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:   root,
+		Spawn: spawn,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFresh {
+		t.Errorf("action = %v, want ActionFresh (colocated path should win)", action)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("got %d spawn calls, want 0", len(*calls))
+	}
+}
+
+func TestRunJJColocatedStale(t *testing.T) {
+	root := makeRepo(t, ".jj/repo/store/git", ".git")
+	now := time.Now()
+	touchOld(t, filepath.Join(root, ".git", "FETCH_HEAD"), now.Add(-2*time.Hour))
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:   root,
+		Spawn: spawn,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched", action)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("got %d spawn calls, want 1", len(*calls))
+	}
+	if (*calls)[0].name != "jj" {
+		t.Errorf("spawn name = %q, want %q", (*calls)[0].name, "jj")
+	}
+}
+
+// Spawn errors propagate as Run errors but the Action is still
+// reported as ActionFetched (the decision was to fetch; only the
+// kernel-level Start failed). This keeps the error path observable
+// while not duplicating the "we tried" outcome.
+func TestRunSpawnErrorPropagates(t *testing.T) {
+	root := makeRepo(t, ".git")
+	failing := func(string, []string) error { return errors.New("boom") }
+
+	action, err := Run(&Options{Cwd: root, Spawn: failing})
+	if err == nil {
+		t.Fatal("Run: want error, got nil")
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched", action)
+	}
+}
+
+// TestRunGitWorktreeResolvesMarker covers the worktree case: `.git`
+// at the worktree root is a *file* pointing at the per-worktree
+// gitdir (under <main>/.git/worktrees/<name>), and FETCH_HEAD lives
+// in the shared common dir under the main `.git`. The naive
+// `<root>/.git/FETCH_HEAD` join would never resolve, so without the
+// gitMarkerPath fallback the gate would always treat worktrees as
+// stale and re-fetch on every cd.
+func TestRunGitWorktreeResolvesMarker(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	main := t.TempDir()
+	gitInit(t, main)
+	gitCommit(t, main, "initial")
+
+	wtParent := t.TempDir()
+	wt := filepath.Join(wtParent, "wt")
+	gitRun(t, main, "worktree", "add", "-b", "wt-branch", wt)
+
+	// `git fetch` in a worktree writes to whichever path
+	// `git rev-parse --git-path FETCH_HEAD` resolves to, which varies
+	// by git version: newer git (~2.21+) uses a per-worktree path
+	// under <main-gitdir>/worktrees/<name>/FETCH_HEAD, older git
+	// shares the common dir's <main-gitdir>/FETCH_HEAD. Ask git which
+	// one it'd use and touch *that*, so the test stays aligned with
+	// what the production gitMarkerPath() probes regardless of
+	// version.
+	gpCmd := exec.Command("git", "-C", wt, "rev-parse", "--git-path", "FETCH_HEAD")
+	gpCmd.Env = cleanGitEnv()
+	gitPathOut, err := gpCmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse --git-path FETCH_HEAD: %v", err)
+	}
+	wtFetchHead := strings.TrimSpace(string(gitPathOut))
+	if !filepath.IsAbs(wtFetchHead) {
+		wtFetchHead = filepath.Join(wt, wtFetchHead)
+	}
+	now := time.Now()
+	touchOld(t, wtFetchHead, now.Add(-1*time.Minute))
+
+	calls, spawn := recordingSpawn()
+	action, err := Run(&Options{
+		Cwd:   wt,
+		Spawn: spawn,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFresh {
+		t.Errorf("action = %v, want ActionFresh (worktree marker should resolve to common dir)", action)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("got %d spawn calls, want 0", len(*calls))
+	}
+}
+
+// TestDetachedSpawnDryRunSkipsFork covers the global -n/--dry-run
+// flag: detachedSpawn must consult runner.DryRun and skip the fork,
+// otherwise `vcs -n auto-fetch` triggers a real network fetch
+// despite being documented as a preview-only mode.
+func TestDetachedSpawnDryRunSkipsFork(t *testing.T) {
+	prev := runner.DryRun
+	runner.DryRun = true
+	t.Cleanup(func() { runner.DryRun = prev })
+
+	// /no/such/binary would fail loudly if Spawn ran for real (Start
+	// returns ENOENT). Under DryRun we expect a clean nil with no
+	// process started.
+	if err := detachedSpawn("/no/such/binary", []string{"arg"}); err != nil {
+		t.Errorf("detachedSpawn(DryRun=true) error = %v, want nil", err)
+	}
+}
+
+// gitInit / gitCommit / gitRun: tiny helpers for the worktree test
+// above. Inline rather than imported to keep autofetch's test
+// dependencies tight (just stdlib + runner).
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
+	gitRun(t, dir, "init", "--quiet", "-b", "main")
+	gitRun(t, dir, "config", "commit.gpgsign", "false")
+}
+
+func gitCommit(t *testing.T, dir, msg string) {
+	t.Helper()
+	gitRun(t, dir, "commit", "--allow-empty", "--no-verify", "-m", msg)
+}
+
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	// cleanGitEnv strips GIT_DIR/GIT_INDEX_FILE/etc. so the child git
+	// operates on dir's repo regardless of how this test process was
+	// launched — most relevantly, from a pre-commit hook where git
+	// exports those vars and would otherwise redirect every child
+	// `git ...` invocation back at the hook's repo.
+	cmd.Env = append(cleanGitEnv(),
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=t@t",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func equalArgs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
