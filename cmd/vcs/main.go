@@ -21,6 +21,10 @@
 //	hosting     Print the hosting platform (e.g. "github").
 //	prompt-info Print all prompt info in one invocation (see --format, --color).
 //	prompt-line Print the full preprompt first line (host + dir + auth).
+//	auto-fetch  Spawn a detached background fetch when the repo's fetch
+//	            marker is older than --max-age (default 1h). Silent on
+//	            no-op paths; intended to be called from shell prompt
+//	            hooks after a cd.
 //	clearcache  Remove .vcs_cache files under the current directory.
 //	version     Print the vcs version, git commit, and build date.
 package main
@@ -32,7 +36,9 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/mikelward/vcs/autofetch"
 	"github.com/mikelward/vcs/promptinfo"
 	"github.com/mikelward/vcs/promptline"
 	"github.com/mikelward/vcs/vcsdetect"
@@ -128,6 +134,9 @@ func main() {
 		return
 	case "prompt-line":
 		promptLineCmd(forceVCS, hgPath, subArgs)
+		return
+	case "auto-fetch":
+		autoFetchCmd(forceVCS, hgPath, subArgs)
 		return
 	case "clearcache":
 		clearCache()
@@ -364,4 +373,67 @@ func promptLineCmd(forceVCS, hgPath string, args []string) {
 	}
 
 	fmt.Println(promptline.Build(opts))
+}
+
+// autoFetchCmd parses flags for the auto-fetch subcommand and calls
+// autofetch.Run. Output is silent on the no-op paths; --verbose prints
+// a single-word action ("not-in-repo" / "fresh" / "fetched" /
+// "unsupported") so shell tests and humans can verify what happened.
+//
+// Errors from the underlying spawn are printed to stderr but the
+// process exits 0 — auto-fetch is best-effort prompt-time code, not a
+// user-facing fetch tool.
+func autoFetchCmd(forceVCS, hgPath string, args []string) {
+	maxAge := time.Hour
+	verbose := false
+
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "--verbose" || a == "-v":
+			verbose = true
+			i++
+		case strings.HasPrefix(a, "--max-age="):
+			d, err := time.ParseDuration(strings.TrimPrefix(a, "--max-age="))
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "vcs auto-fetch: invalid --max-age:", err)
+				os.Exit(2)
+			}
+			maxAge = d
+			i++
+		case a == "--max-age":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "vcs auto-fetch: --max-age needs a value")
+				os.Exit(2)
+			}
+			d, err := time.ParseDuration(args[i+1])
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "vcs auto-fetch: invalid --max-age:", err)
+				os.Exit(2)
+			}
+			maxAge = d
+			i += 2
+		default:
+			fmt.Fprintln(os.Stderr, "vcs auto-fetch: unknown flag:", a)
+			os.Exit(2)
+		}
+	}
+
+	// main()'s flag parser stores --hg-path as the literal flag string
+	// (`--hg-path=PATH`) so it can be passed through to vcs-hg verbatim.
+	// autofetch.Options.HgPath wants just the path, so strip the prefix.
+	bareHgPath := strings.TrimPrefix(hgPath, "--hg-path=")
+
+	action, err := autofetch.Run(&autofetch.Options{
+		MaxAge:   maxAge,
+		ForceVCS: forceVCS,
+		HgPath:   bareHgPath,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "vcs auto-fetch:", err)
+	}
+	if verbose {
+		fmt.Println(action)
+	}
 }
