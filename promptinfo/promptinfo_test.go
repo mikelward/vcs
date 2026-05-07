@@ -626,6 +626,29 @@ func TestGatherHGNotBehind(t *testing.T) {
 	}
 }
 
+func TestGatherHGUnknownStatusWithBehind(t *testing.T) {
+	hgPath := testHgPath(t)
+	_, local := initHgRepoWithRemote(t, hgPath)
+	if err := os.WriteFile(filepath.Join(local, "unknown.txt"), []byte("unknown\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	info := &vcsdetect.Info{VCS: "hg", RootDir: local}
+	fields := map[string]bool{"behind": true, "status": true}
+
+	result, err := Gather(info, fields, &Options{HgPath: hgPath})
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+
+	if result.Status != "*" {
+		t.Errorf("Status = %q, want %q for unknown hg file", result.Status, "*")
+	}
+	if result.Behind {
+		t.Error("Behind should be false when hg summary reports current")
+	}
+}
+
 // helpers
 
 func sortStrings(s []string) {
