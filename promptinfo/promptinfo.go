@@ -59,9 +59,7 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 
 	// status (and the derived behind/upstream signal) is the only slow
 	// (subprocess-forking) field. Launch it up front so it runs
-	// concurrently with the file-read fields below. Status and behind
-	// share a single fork via getStatusAndBehind, so this block also
-	// services {behind} when no {status} is requested.
+	// concurrently with the file-read fields below.
 	var wg sync.WaitGroup
 	var sbStatus string
 	var sbBehind, sbHasUpstream bool
@@ -69,7 +67,7 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sbStatus, sbBehind, sbHasUpstream = getStatusAndBehind(info, opts)
+			sbStatus, sbBehind, sbHasUpstream = getStatusAndBehind(info, opts, fields["status"], fields["behind"])
 		}()
 	}
 
@@ -149,10 +147,10 @@ func getBranch(info *vcsdetect.Info) string {
 	return ""
 }
 
-// getStatusAndBehind runs the VCS status fork once and returns:
+// getStatusAndBehind runs the VCS status/behind probes and returns:
 //   - status: "*" if there are uncommitted changes, else ""
-//   - behind: true if the branch line reports the local branch is behind upstream
-//   - hasUpstream: true if the branch line reports an upstream tracking branch
+//   - behind: true if fetched upstream state is ahead of the current checkout
+//   - hasUpstream: true if fetched upstream state is available for comparison
 //
 // For git, --branch --porcelain prints a leading branch line like
 //
@@ -162,9 +160,13 @@ func getBranch(info *vcsdetect.Info) string {
 // the local branch is non-empty relative to upstream. hasUpstream is true
 // whenever the "..." separator is present, regardless of ahead/behind state.
 //
-// For jj/hg the behind/upstream signals aren't computed here and the caller
-// falls back to a mtime check on the fetch marker.
-func getStatusAndBehind(info *vcsdetect.Info, opts *Options) (status string, behind bool, hasUpstream bool) {
+// For hg, summary reports both dirty state and whether the working copy can be
+// updated to a fetched branch head.
+//
+// For jj, fetched remote bookmarks are the upstream signal. A remote bookmark
+// outside ancestors(@) means there is fetched work that the current checkout
+// does not contain.
+func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBehind bool) (status string, behind bool, hasUpstream bool) {
 	var out string
 	switch info.VCS {
 	case "git":
@@ -188,34 +190,76 @@ func getStatusAndBehind(info *vcsdetect.Info, opts *Options) (status string, beh
 		}
 		return
 	case "jj":
-		// Legacy behavior: a non-empty description on @ means "clean"
-		// (the user committed work); otherwise check diff. Since jj
-		// has ~tens-of-ms startup per invocation, run both in parallel
-		// rather than serially — worst case we've "wasted" a diff call
-		// we didn't need, but wall-clock time is the slower of the two
-		// instead of their sum.
-		var desc, diff string
+		var desc, diff, bookmarkStates string
 		var jjwg sync.WaitGroup
-		jjwg.Add(2)
-		go func() {
-			defer jjwg.Done()
-			desc, _ = capture("jj", "-R", info.RootDir, "log", "--no-graph", "-r", "@", "-T", "description")
-		}()
-		go func() {
-			defer jjwg.Done()
-			diff, _ = capture("jj", "-R", info.RootDir, "diff", "--summary")
-		}()
+		if needStatus {
+			// Legacy behavior: a non-empty description on @ means "clean"
+			// (the user committed work); otherwise check diff. Since jj
+			// has ~tens-of-ms startup per invocation, run both in parallel
+			// rather than serially.
+			jjwg.Add(2)
+			go func() {
+				defer jjwg.Done()
+				desc, _ = capture("jj", "-R", info.RootDir, "log", "--no-graph", "-r", "@", "-T", "description")
+			}()
+			go func() {
+				defer jjwg.Done()
+				diff, _ = capture("jj", "-R", info.RootDir, "diff", "--summary")
+			}()
+		}
+		if needBehind {
+			jjwg.Add(1)
+			go func() {
+				defer jjwg.Done()
+				tmpl := `if(self.contained_in("ancestors(@)"), "upstream\n", "behind\n")`
+				bookmarkStates, _ = capture("jj", "-R", info.RootDir, "log", "--no-graph", "-r", "remote_bookmarks()", "-T", tmpl)
+			}()
+		}
 		jjwg.Wait()
-		if desc == "" {
+		if needStatus && desc == "" {
 			out = diff
 		}
+		if needBehind {
+			for _, line := range strings.Split(bookmarkStates, "\n") {
+				switch strings.TrimSpace(line) {
+				case "behind":
+					behind = true
+					hasUpstream = true
+				case "upstream":
+					hasUpstream = true
+				}
+			}
+		}
 	case "hg":
+		if needBehind {
+			out, _ = capture(resolveHg(opts), "-R", info.RootDir, "summary")
+			status, behind, hasUpstream = parseHgSummary(out, needStatus)
+			return
+		}
 		out, _ = capture(resolveHg(opts), "-R", info.RootDir, "status")
 	}
 	if strings.TrimSpace(out) != "" {
 		status = "*"
 	}
 	return
+}
+
+func parseHgSummary(out string, needStatus bool) (status string, behind bool, hasUpstream bool) {
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "commit:"):
+			if needStatus && !strings.Contains(line, "(clean)") {
+				status = "*"
+			}
+		case strings.HasPrefix(line, "update:"):
+			hasUpstream = true
+			update := strings.TrimSpace(strings.TrimPrefix(line, "update:"))
+			if update != "" && update != "(current)" {
+				behind = true
+			}
+		}
+	}
+	return status, behind, hasUpstream
 }
 
 func fetchHeadPath(info *vcsdetect.Info) string {

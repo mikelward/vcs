@@ -34,7 +34,7 @@ vcs (dispatcher)
 |---------|---------|
 | `vcsdetect` | VCS detection: walks directory tree, reads/writes `.vcs_cache`, detects backend and hosting |
 | `runner` | Subprocess execution helpers: `Run`, `Exec`, `ExitCode`, `FindCommand` |
-| `promptinfo` | Gathers VCS prompt fields (project, subdir, branch, status, fetch_stale) in one process |
+| `promptinfo` | Gathers VCS prompt fields (project, subdir, branch, status, behind) in one process |
 | `promptline` | Assembles the full preprompt first line (hostname, shpool, dir/VCS, auth) in one process |
 | `cmd/vcs` | Main dispatcher binary |
 | `cmd/vcs-git` | Git subcommand translations |
@@ -180,7 +180,7 @@ The `vcs` binary:
 
 `prompt-info` and `prompt-line` collapse several shell forks per prompt into
 a single `vcs` invocation. `prompt-info` renders just the VCS fields
-(project, subdir, branch, status, fetch_stale) via a format string.
+(project, subdir, branch, status, behind) via a format string.
 `prompt-line` wraps `prompt-info` and adds the hostname, shpool session tag,
 and auth (`ssh-add -L`) warning, producing the entire first line of the
 preprompt. The shell caller just prepends `\r` and appends a trailing space

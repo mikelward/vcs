@@ -191,6 +191,81 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func testHgPath(t *testing.T) string {
+	t.Helper()
+	if p, err := exec.LookPath("chg"); err == nil {
+		return p
+	}
+	if p, err := exec.LookPath("hg"); err == nil {
+		return p
+	}
+	t.Skip("hg not found")
+	return ""
+}
+
+func runHg(t *testing.T, hgPath, dir string, args ...string) {
+	t.Helper()
+	if dir != "" {
+		args = append([]string{"--cwd", dir}, args...)
+	}
+	cmd := exec.Command(hgPath, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hg %v failed: %v\n%s", args, err, out)
+	}
+}
+
+func initHgRepoWithRemote(t *testing.T, hgPath string) (remote, local string) {
+	t.Helper()
+	root := t.TempDir()
+	remote = filepath.Join(root, "remote")
+	local = filepath.Join(root, "local")
+
+	runHg(t, hgPath, "", "init", remote)
+	os.WriteFile(filepath.Join(remote, "file.txt"), []byte("initial\n"), 0644)
+	runHg(t, hgPath, remote, "add", "file.txt")
+	runHg(t, hgPath, remote, "commit", "-m", "initial commit", "-u", "Test <test@example.com>")
+	runHg(t, hgPath, "", "clone", "-q", remote, local)
+	return remote, local
+}
+
+func testJJ(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("jj"); err != nil {
+		t.Skip("jj not found")
+	}
+}
+
+func runJJ(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("jj", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("jj %v failed: %v\n%s", args, err, out)
+	}
+}
+
+func initJJClone(t *testing.T) (upstream, local string) {
+	t.Helper()
+	testJJ(t)
+
+	root := t.TempDir()
+	upstream = filepath.Join(root, "upstream")
+	os.MkdirAll(upstream, 0755)
+	runGit(t, upstream, "init", "-b", "main")
+	runGit(t, upstream, "config", "commit.gpgsign", "false")
+	runGit(t, upstream, "commit", "--allow-empty", "--no-verify", "-m", "first")
+
+	local = filepath.Join(root, "local")
+	cmd := exec.Command("jj", "git", "clone", upstream, local)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("jj git clone failed: %v\n%s", err, out)
+	}
+	return upstream, local
+}
+
 func TestGatherGitRepo(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found")
@@ -432,6 +507,47 @@ func TestGatherJJRepo(t *testing.T) {
 	}
 }
 
+func TestGatherJJBehindUpstream(t *testing.T) {
+	upstream, local := initJJClone(t)
+	runGit(t, upstream, "commit", "--allow-empty", "--no-verify", "-m", "second")
+	runJJ(t, local, "git", "fetch")
+
+	info := &vcsdetect.Info{VCS: "jj", Backend: "git", RootDir: local}
+	fields := map[string]bool{"behind": true, "status": true}
+
+	result, err := Gather(info, fields, nil)
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+
+	if !result.Behind {
+		t.Error("Behind should be true when a fetched remote bookmark is ahead of @")
+	}
+	if result.Status != "" {
+		t.Errorf("Status = %q, want empty for clean tree", result.Status)
+	}
+}
+
+func TestGatherJJNotBehind(t *testing.T) {
+	_, local := initJJClone(t)
+
+	info := &vcsdetect.Info{VCS: "jj", Backend: "git", RootDir: local}
+	fetchPath := fetchHeadPath(info)
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(fetchPath, old, old); err != nil {
+		t.Fatalf("age jj FETCH_HEAD: %v", err)
+	}
+
+	result, err := Gather(info, map[string]bool{"behind": true}, nil)
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+
+	if result.Behind {
+		t.Error("Behind should be false when @ contains all remote bookmarks, even with stale FETCH_HEAD")
+	}
+}
+
 func TestGatherHGRepo(t *testing.T) {
 	hgCmd := "hg"
 	if p, err := exec.LookPath("chg"); err == nil {
@@ -456,6 +572,51 @@ func TestGatherHGRepo(t *testing.T) {
 
 	if result.Branch != "default" {
 		t.Errorf("Branch = %q, want %q for hg", result.Branch, "default")
+	}
+}
+
+func TestGatherHGBehindUpstream(t *testing.T) {
+	hgPath := testHgPath(t)
+	remote, local := initHgRepoWithRemote(t, hgPath)
+	os.WriteFile(filepath.Join(remote, "remote.txt"), []byte("remote\n"), 0644)
+	runHg(t, hgPath, remote, "add", "remote.txt")
+	runHg(t, hgPath, remote, "commit", "-m", "remote commit", "-u", "Test <test@example.com>")
+	runHg(t, hgPath, local, "pull", "-q")
+
+	info := &vcsdetect.Info{VCS: "hg", RootDir: local}
+	fields := map[string]bool{"behind": true, "status": true}
+
+	result, err := Gather(info, fields, &Options{HgPath: hgPath})
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+
+	if !result.Behind {
+		t.Error("Behind should be true when hg summary reports an available update")
+	}
+	if result.Status != "" {
+		t.Errorf("Status = %q, want empty for clean tree", result.Status)
+	}
+}
+
+func TestGatherHGNotBehind(t *testing.T) {
+	hgPath := testHgPath(t)
+	_, local := initHgRepoWithRemote(t, hgPath)
+
+	info := &vcsdetect.Info{VCS: "hg", RootDir: local}
+	fetchPath := fetchHeadPath(info)
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(fetchPath, old, old); err != nil {
+		t.Fatalf("age hg fetch marker: %v", err)
+	}
+
+	result, err := Gather(info, map[string]bool{"behind": true}, &Options{HgPath: hgPath})
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+
+	if result.Behind {
+		t.Error("Behind should be false when hg summary reports current, even with stale fetch marker")
 	}
 }
 
