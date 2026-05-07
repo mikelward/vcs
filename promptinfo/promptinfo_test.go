@@ -533,6 +533,12 @@ func TestGatherJJNotBehind(t *testing.T) {
 
 	info := &vcsdetect.Info{VCS: "jj", Backend: "git", RootDir: local}
 	fetchPath := fetchHeadPath(info)
+	if err := os.MkdirAll(filepath.Dir(fetchPath), 0755); err != nil {
+		t.Fatalf("create jj fetch marker dir: %v", err)
+	}
+	if err := os.WriteFile(fetchPath, []byte("test"), 0644); err != nil {
+		t.Fatalf("write jj FETCH_HEAD: %v", err)
+	}
 	old := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(fetchPath, old, old); err != nil {
 		t.Fatalf("age jj FETCH_HEAD: %v", err)
