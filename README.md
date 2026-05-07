@@ -63,7 +63,7 @@ $ vcs -n commit -m "fix bug"
 | `rootdir` | Print the repository root directory. |
 | `backend` | Print the VCS backend (e.g. `git` for jj-on-git). |
 | `hosting` | Print the hosting platform (e.g. `github`). |
-| `prompt-info` | Print all prompt info (project, subdir, branch, status, fetch_stale) in one invocation. See `--format`, `--color`. |
+| `prompt-info` | Print all prompt info (project, subdir, branch, status, behind) in one invocation. See `--format`, `--color`. |
 | `prompt-line` | Print the full preprompt first line (hostname, shpool tag, directory/VCS info, auth warning) in one invocation. See `--hostname`, `--production`, `--shpool`, `--color`, `--no-ssh`. |
 | `clearcache` | Remove `.vcs_cache` files under the current directory. |
 | `version` | Print the version, git commit, and build date on separate lines. |
