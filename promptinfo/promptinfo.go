@@ -1,6 +1,7 @@
 // Package promptinfo gathers VCS prompt information in a single invocation,
-// replacing 6-12 shell forks per prompt with 1 process. Branch and
-// fetch_stale are read from files; only status requires a subprocess.
+// replacing 6-12 shell forks per prompt with 1 process. Branch is read from
+// files; status (and the derived "behind upstream" signal) requires a
+// subprocess.
 package promptinfo
 
 import (
@@ -17,18 +18,20 @@ import (
 )
 
 // DefaultFormat is the default format string for prompt-info output.
-const DefaultFormat = `{project} {subdir} {branch} {status} {fetch_stale}`
+const DefaultFormat = `{project} {subdir} {branch} {status} {behind}`
 
-// fetchStaleThreshold is how old FETCH_HEAD must be to be considered stale.
+// fetchStaleThreshold is how old FETCH_HEAD must be to be considered stale,
+// used as a fallback for repos with no configured upstream (where the
+// ahead/behind comparison can't be made).
 const fetchStaleThreshold = 24 * time.Hour
 
 // Result holds the gathered prompt information.
 type Result struct {
-	Project    string // filepath.Base(rootDir)
-	Subdir     string // cwd relative to rootDir
-	Branch     string // current branch (empty for jj)
-	Status     string // unique sorted status chars like "?? M", space-separated
-	FetchStale bool   // true if last fetch > 24h ago
+	Project string // filepath.Base(rootDir)
+	Subdir  string // cwd relative to rootDir
+	Branch  string // current branch (empty for jj)
+	Status  string // "*" if there are uncommitted changes, else ""
+	Behind  bool   // true if upstream has commits we don't, or (no upstream) FETCH_HEAD is stale
 }
 
 // ParseFields extracts {field} names from a format string.
@@ -54,14 +57,19 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 	}
 	r := &Result{}
 
-	// status is the only slow (subprocess-forking) field. Launch it up
-	// front so it runs concurrently with the file-read fields below.
+	// status (and the derived behind/upstream signal) is the only slow
+	// (subprocess-forking) field. Launch it up front so it runs
+	// concurrently with the file-read fields below. Status and behind
+	// share a single fork via getStatusAndBehind, so this block also
+	// services {behind} when no {status} is requested.
 	var wg sync.WaitGroup
-	if fields["status"] {
+	var sbStatus string
+	var sbBehind, sbHasUpstream bool
+	if fields["status"] || fields["behind"] {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r.Status = getStatus(info, opts)
+			sbStatus, sbBehind, sbHasUpstream = getStatusAndBehind(info, opts)
 		}()
 	}
 
@@ -81,11 +89,20 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 		r.Branch = getBranch(info)
 	}
 
-	if fields["fetch_stale"] {
-		r.FetchStale = getFetchStale(fetchHeadPath(info))
-	}
-
 	wg.Wait()
+	if fields["status"] {
+		r.Status = sbStatus
+	}
+	if fields["behind"] {
+		if sbBehind {
+			r.Behind = true
+		} else if !sbHasUpstream {
+			// No upstream (or non-git VCS): fall back to FETCH_HEAD mtime
+			// so repos that can't compare refs still get a nag if the
+			// fetch marker has gone stale.
+			r.Behind = getFetchStale(fetchHeadPath(info))
+		}
+	}
 	return r, nil
 }
 
@@ -132,11 +149,44 @@ func getBranch(info *vcsdetect.Info) string {
 	return ""
 }
 
-func getStatus(info *vcsdetect.Info, opts *Options) string {
+// getStatusAndBehind runs the VCS status fork once and returns:
+//   - status: "*" if there are uncommitted changes, else ""
+//   - behind: true if the branch line reports the local branch is behind upstream
+//   - hasUpstream: true if the branch line reports an upstream tracking branch
+//
+// For git, --branch --porcelain prints a leading branch line like
+//
+//	## main...origin/main [behind 3]
+//
+// when an upstream is configured. The ahead/behind brackets only appear when
+// the local branch is non-empty relative to upstream. hasUpstream is true
+// whenever the "..." separator is present, regardless of ahead/behind state.
+//
+// For jj/hg the behind/upstream signals aren't computed here and the caller
+// falls back to a mtime check on the fetch marker.
+func getStatusAndBehind(info *vcsdetect.Info, opts *Options) (status string, behind bool, hasUpstream bool) {
 	var out string
 	switch info.VCS {
 	case "git":
-		out, _ = capture("git", "-C", info.RootDir, "status", "--short", "--untracked-files=all")
+		out, _ = capture("git", "-C", info.RootDir, "status", "--branch", "--porcelain", "--untracked-files=all")
+		lines := strings.SplitN(out, "\n", 2)
+		var branchLine, rest string
+		if len(lines) > 0 {
+			branchLine = lines[0]
+		}
+		if len(lines) > 1 {
+			rest = lines[1]
+		}
+		if strings.Contains(branchLine, "...") {
+			hasUpstream = true
+			if strings.Contains(branchLine, "behind ") {
+				behind = true
+			}
+		}
+		if strings.TrimSpace(rest) != "" {
+			status = "*"
+		}
+		return
 	case "jj":
 		// Legacy behavior: a non-empty description on @ means "clean"
 		// (the user committed work); otherwise check diff. Since jj
@@ -163,9 +213,9 @@ func getStatus(info *vcsdetect.Info, opts *Options) string {
 		out, _ = capture(resolveHg(opts), "-R", info.RootDir, "status")
 	}
 	if strings.TrimSpace(out) != "" {
-		return "*"
+		status = "*"
 	}
-	return ""
+	return
 }
 
 func fetchHeadPath(info *vcsdetect.Info) string {
@@ -209,22 +259,23 @@ func Format(r *Result, format string, color bool) string {
 	subdir := r.Subdir
 	branch := r.Branch
 	status := r.Status
-	fetchStale := ""
-	if r.FetchStale {
-		fetchStale = "fetch"
+	behind := ""
+	if r.Behind {
+		behind = "pull"
 	}
 
 	if color {
 		project = colorWrap(project, "\033[32m")
 		subdir = colorWrap(subdir, "\033[34m")
 		status = colorWrap(status, "\033[33m")
-		fetchStale = colorWrap(fetchStale, "\033[33m")	}
+		behind = colorWrap(behind, "\033[33m")
+	}
 
 	s = strings.ReplaceAll(s, "{project}", project)
 	s = strings.ReplaceAll(s, "{subdir}", subdir)
 	s = strings.ReplaceAll(s, "{branch}", branch)
 	s = strings.ReplaceAll(s, "{status}", status)
-	s = strings.ReplaceAll(s, "{fetch_stale}", fetchStale)
+	s = strings.ReplaceAll(s, "{behind}", behind)
 
 	// Collapse multiple spaces into one on each line, and trim trailing spaces.
 	lines := strings.Split(s, "\n")
