@@ -220,8 +220,14 @@ func TestOutgoingIncoming(t *testing.T) {
 		t.Errorf("outgoing missing commit: %q", out)
 	}
 
-	// incoming: push then add a remote commit via a second clone.
+	// After pushing, outgoing is empty.
 	gitRun(t, local, "push")
+	out, _ = runDispatch(t, local, "outgoing")
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("outgoing after push: %q", out)
+	}
+
+	// incoming: fetch then check for remote commits.
 	gitRun(t, local, "fetch")
 	out, _ = runDispatch(t, local, "incoming")
 	if strings.TrimSpace(out) != "" {
@@ -261,6 +267,41 @@ func TestPullUsesRebaseLog(t *testing.T) {
 	}
 	if !strings.Contains(out, "git --no-pager pull --rebase --log") {
 		t.Errorf("pull should pass --rebase --log to git; got: %q", out)
+	}
+}
+
+// TestOutgoingNoUpstream verifies outgoing works when there is no upstream
+// tracking branch. With the old @{upstream}..HEAD approach this would error;
+// HEAD --not --remotes works regardless.
+func TestOutgoingNoUpstream(t *testing.T) {
+	remote, local := newGitRepo(t)
+
+	// Create a new branch without setting an upstream (-u).
+	gitRun(t, local, "checkout", "-b", "feature")
+	writeFile(t, local, "f.txt", "y")
+	gitRun(t, local, "add", "f.txt")
+	gitRun(t, local, "commit", "-m", "feature commit")
+
+	// No upstream configured: outgoing should show the commit, not error.
+	out, err := runDispatch(t, local, "outgoing")
+	if err != nil {
+		t.Errorf("outgoing with no upstream: %v", err)
+	}
+	if !strings.Contains(out, "feature commit") {
+		t.Errorf("outgoing missing feature commit: %q", out)
+	}
+
+	// Push via named remote without -u (no tracking branch set).
+	_ = remote
+	gitRun(t, local, "push", "origin", "feature")
+
+	// After pushing to the remote, outgoing is empty even without an upstream.
+	out, err = runDispatch(t, local, "outgoing")
+	if err != nil {
+		t.Errorf("outgoing after push no upstream: %v", err)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("outgoing after push no upstream: %q", out)
 	}
 }
 

@@ -282,8 +282,13 @@ func gitMap(args []string) error {
 	return gitOutgoing(args)
 }
 
+// TODO: decide whether outgoing should compare against any remote ref
+// (current: HEAD --not --remotes, goes empty once the feature branch is pushed)
+// or against the integration branch only (e.g. HEAD --not remotes/origin/main,
+// keeps showing commits until they land in main). hg and jj also go empty
+// after a push, so current behavior is consistent across backends.
 func gitOutgoing(args []string) error {
-	return git("log", append([]string{"--oneline", "@{upstream}..HEAD"}, args...)...)
+	return git("log", append([]string{"--oneline", "HEAD", "--not", "--remotes"}, args...)...)
 }
 
 func gitBranch() error {
