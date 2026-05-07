@@ -248,7 +248,8 @@ func parseHgSummary(out string, needStatus bool) (status string, behind bool, ha
 	for _, line := range strings.Split(out, "\n") {
 		switch {
 		case strings.HasPrefix(line, "commit:"):
-			if needStatus && !strings.Contains(line, "(clean)") {
+			commit := strings.TrimSpace(strings.TrimPrefix(line, "commit:"))
+			if needStatus && commit != "(clean)" {
 				status = "*"
 			}
 		case strings.HasPrefix(line, "update:"):
