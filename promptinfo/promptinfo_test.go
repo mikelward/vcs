@@ -16,7 +16,7 @@ func TestParseFields(t *testing.T) {
 		format string
 		want   []string
 	}{
-		{"default format", DefaultFormat, []string{"branch", "fetch_stale", "project", "status", "subdir"}},
+		{"default format", DefaultFormat, []string{"behind", "branch", "project", "status", "subdir"}},
 		{"single field", "{branch}", []string{"branch"}},
 		{"no fields", "hello world", nil},
 		{"duplicate fields", "{branch} {branch}", []string{"branch"}},
@@ -78,25 +78,25 @@ func TestFormat(t *testing.T) {
 			want:   "\033[32mmyrepo\033[0m",
 		},
 		{
-			name:   "fetch_stale true",
-			result: &Result{Project: "myrepo", FetchStale: true},
-			format: `{project} {fetch_stale}`,
+			name:   "behind true",
+			result: &Result{Project: "myrepo", Behind: true},
+			format: `{project} {behind}`,
 			color:  false,
-			want:   "myrepo fetch",
+			want:   "myrepo pull",
 		},
 		{
-			name:   "fetch_stale false",
-			result: &Result{Project: "myrepo", FetchStale: false},
-			format: `{project} {fetch_stale}`,
+			name:   "behind false",
+			result: &Result{Project: "myrepo", Behind: false},
+			format: `{project} {behind}`,
 			color:  false,
 			want:   "myrepo",
 		},
 		{
-			name:   "fetch_stale with color",
-			result: &Result{Project: "myrepo", FetchStale: true},
-			format: `{project} {fetch_stale}`,
+			name:   "behind with color",
+			result: &Result{Project: "myrepo", Behind: true},
+			format: `{project} {behind}`,
 			color:  true,
-			want:   "\033[32mmyrepo\033[0m \033[33mfetch\033[0m",
+			want:   "\033[32mmyrepo\033[0m \033[33mpull\033[0m",
 		},
 		{
 			name:   "subdir with color",
@@ -268,7 +268,10 @@ func TestGatherGitUntracked(t *testing.T) {
 	}
 }
 
-func TestGatherGitStaleFetch(t *testing.T) {
+// TestGatherGitBehindMtimeFallback covers the no-upstream case: a git repo
+// with no configured tracking branch falls back to FETCH_HEAD mtime, so a
+// stale marker still flips Behind.
+func TestGatherGitBehindMtimeFallback(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found")
 	}
@@ -281,15 +284,98 @@ func TestGatherGitStaleFetch(t *testing.T) {
 	os.Chtimes(fetchPath, old, old)
 
 	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: tmp}
-	fields := map[string]bool{"fetch_stale": true}
+	fields := map[string]bool{"behind": true}
 
 	result, err := Gather(info, fields, nil)
 	if err != nil {
 		t.Fatalf("Gather() error: %v", err)
 	}
 
-	if !result.FetchStale {
-		t.Error("FetchStale should be true for stale FETCH_HEAD")
+	if !result.Behind {
+		t.Error("Behind should be true for stale FETCH_HEAD with no upstream")
+	}
+}
+
+// TestGatherGitBehindUpstream covers the in-upstream-and-behind case: set up
+// a remote/upstream where the tracking branch is ahead of HEAD, and confirm
+// status --branch --porcelain detects it as behind.
+func TestGatherGitBehindUpstream(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	// Build an "upstream" repo with two commits, then a "local" clone that
+	// rewinds to the first commit so it's behind by one.
+	upstream := t.TempDir()
+	runGit(t, upstream, "init", "-b", "main")
+	runGit(t, upstream, "config", "commit.gpgsign", "false")
+	runGit(t, upstream, "commit", "--allow-empty", "--no-verify", "-m", "first")
+	runGit(t, upstream, "commit", "--allow-empty", "--no-verify", "-m", "second")
+
+	local := t.TempDir()
+	// Re-init in `local` rather than `git clone <upstream> <local>` so
+	// `clone` doesn't reject a non-empty TempDir on some platforms.
+	runGit(t, local, "init", "-b", "main")
+	runGit(t, local, "config", "commit.gpgsign", "false")
+	runGit(t, local, "remote", "add", "origin", upstream)
+	runGit(t, local, "fetch", "origin")
+	runGit(t, local, "reset", "--hard", "origin/main~")
+	runGit(t, local, "branch", "--set-upstream-to=origin/main", "main")
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: local}
+	fields := map[string]bool{"behind": true, "status": true}
+
+	result, err := Gather(info, fields, nil)
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+
+	if !result.Behind {
+		t.Error("Behind should be true when upstream is ahead of HEAD")
+	}
+	if result.Status != "" {
+		t.Errorf("Status = %q, want empty for clean tree", result.Status)
+	}
+}
+
+// TestGatherGitNotBehind covers the in-upstream-and-up-to-date case: same
+// setup as above without the rewind. Should not be flagged behind, and the
+// stale-mtime fallback should NOT kick in even when FETCH_HEAD is old (we
+// have an upstream and it agrees with HEAD).
+func TestGatherGitNotBehind(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	upstream := t.TempDir()
+	runGit(t, upstream, "init", "-b", "main")
+	runGit(t, upstream, "config", "commit.gpgsign", "false")
+	runGit(t, upstream, "commit", "--allow-empty", "--no-verify", "-m", "only")
+
+	local := t.TempDir()
+	runGit(t, local, "init", "-b", "main")
+	runGit(t, local, "config", "commit.gpgsign", "false")
+	runGit(t, local, "remote", "add", "origin", upstream)
+	runGit(t, local, "fetch", "origin")
+	runGit(t, local, "reset", "--hard", "origin/main")
+	runGit(t, local, "branch", "--set-upstream-to=origin/main", "main")
+
+	// Age FETCH_HEAD past the stale threshold to prove the upstream
+	// signal takes priority over the mtime fallback.
+	fetchPath := filepath.Join(local, ".git", "FETCH_HEAD")
+	old := time.Now().Add(-48 * time.Hour)
+	os.Chtimes(fetchPath, old, old)
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: local}
+	fields := map[string]bool{"behind": true}
+
+	result, err := Gather(info, fields, nil)
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+
+	if result.Behind {
+		t.Error("Behind should be false when local is up to date with upstream, even with stale FETCH_HEAD")
 	}
 }
 
