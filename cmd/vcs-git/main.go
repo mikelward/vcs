@@ -142,7 +142,7 @@ func dispatch(subcmd string, args []string) error {
 	case "prev":
 		return git("checkout", "HEAD~")
 	case "pull":
-		return git("pull", append([]string{"--rebase"}, args...)...)
+		return git("pull", append([]string{"--rebase", "--log"}, args...)...)
 	case "push":
 		return git("push", args...)
 	case "rebase":

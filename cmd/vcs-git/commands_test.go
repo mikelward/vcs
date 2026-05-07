@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"github.com/mikelward/vcs/runner"
 
 	vcs "github.com/mikelward/vcs"
+	"github.com/mikelward/vcs/runner"
 )
 
 // TestAllCommandsHandled verifies every canonical VCS command is recognized
@@ -247,6 +247,20 @@ func TestOutgoingIncoming(t *testing.T) {
 	out, _ = runDispatch(t, local, "incoming")
 	if !strings.Contains(out, "remote commit") {
 		t.Errorf("incoming missing new commit: %q", out)
+	}
+}
+
+func TestPullUsesRebaseLog(t *testing.T) {
+	old := runner.DryRun
+	runner.DryRun = true
+	defer func() { runner.DryRun = old }()
+
+	out, err := runDispatch(t, t.TempDir(), "pull")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if !strings.Contains(out, "git --no-pager pull --rebase --log") {
+		t.Errorf("pull should pass --rebase --log to git; got: %q", out)
 	}
 }
 
