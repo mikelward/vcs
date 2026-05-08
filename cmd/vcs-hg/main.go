@@ -147,6 +147,8 @@ func dispatch(subcmd string, args []string) error {
 		return hg(append([]string{"--config", "hooks.precommit=", "--config", "hooks.pre-commit=", "commit"}, args...)...)
 	case "copy":
 		return hg(append([]string{"copy"}, args...)...)
+	case "count":
+		return hgCount()
 	case "diffedit":
 		return hg(append([]string{"histedit"}, args...)...)
 	case "diffs":
@@ -367,6 +369,15 @@ func hgGraph(args []string) error {
 		return hg("log", "--graph", "--template", "oneline", "-r", revset)
 	}
 	return hg(append([]string{"log", "--graph", "--template", "oneline"}, args...)...)
+}
+
+func hgCount() error {
+	out, err := capture(hgCmd, "--pager", "never", "log", "-r", "ancestors(.)+.", "--template", "\n")
+	if err != nil {
+		return err
+	}
+	fmt.Println(strings.Count(out, "\n"))
+	return nil
 }
 
 func hgIgnore(args []string) error {

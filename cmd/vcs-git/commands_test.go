@@ -321,6 +321,34 @@ func TestPending(t *testing.T) {
 }
 
 //
+//
+// count
+//
+
+func TestCount(t *testing.T) {
+	_, local := newGitRepo(t)
+
+	out, err := runDispatch(t, local, "count")
+	if err != nil {
+		t.Fatalf("count: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(out) != "1" {
+		t.Errorf("count after initial commit: want 1, got %q", out)
+	}
+
+	writeFile(t, local, "a.txt", "x")
+	gitRun(t, local, "add", "a.txt")
+	gitRun(t, local, "commit", "-m", "second commit")
+	out, err = runDispatch(t, local, "count")
+	if err != nil {
+		t.Fatalf("count: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(out) != "2" {
+		t.Errorf("count after second commit: want 2, got %q", out)
+	}
+}
+
+//
 // commit / amend / reword / describe / recommit
 //
 

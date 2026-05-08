@@ -123,6 +123,8 @@ func dispatch(subcmd string, args []string) error {
 		return jj(append([]string{"commit"}, args...)...)
 	case "copy":
 		return runner.Run("cp", args...)
+	case "count":
+		return jjCount()
 	case "diffedit":
 		return jj(append([]string{"diffedit"}, args...)...)
 	case "diffstat":
@@ -413,6 +415,15 @@ func jjReword(args []string) error {
 		return jj("describe")
 	}
 	return jj(append([]string{"describe", "-m"}, args...)...)
+}
+
+func jjCount() error {
+	out, err := capture("jj", "--no-pager", "log", "--no-graph", "-r", "ancestors(@)|@", "-T", "\n")
+	if err != nil {
+		return err
+	}
+	fmt.Println(strings.Count(out, "\n"))
+	return nil
 }
 
 func jjStatus(args []string) error {

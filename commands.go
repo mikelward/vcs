@@ -22,6 +22,7 @@ var Commands = []string{
 	"commit",
 	"commitforce",
 	"copy",
+	"count",
 	"describe",
 	"diffedit",
 	"diffs",
