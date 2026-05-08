@@ -111,7 +111,7 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 | `squash` | Squash commits | `git merge --squash` | `hg fold` | `jj squash` |
 | `split` | Split a commit | `git rebase -i` | `hg split` | `jj split` |
 | `drop` | Remove a commit | `git rebase --onto` | `hg prune` | `jj abandon` |
-| `graft` / `pick` | Copy a commit | `git cherry-pick` | `hg graft` | `jj duplicate` |
+| `cherrypick` / `graft` / `pick` | Copy a commit | `git cherry-pick` | `hg graft` | `jj duplicate` |
 | `rebase` | Rebase commits | `git rebase` | `hg rebase` | `jj rebase` |
 | `histedit` / `diffedit` | Interactive history edit | `git rebase -i` | `hg histedit` | `jj diffedit` |
 | `undo` | Undo last operation | `git reset --mixed HEAD~` | `hg undo` | `jj undo` |

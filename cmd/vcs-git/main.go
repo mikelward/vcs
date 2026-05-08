@@ -81,6 +81,8 @@ func dispatch(subcmd string, args []string) error {
 		return git("diff", args...)
 	case "checkout", "goto":
 		return git("checkout", args...)
+	case "cherrypick":
+		return git("cherry-pick", args...)
 	case "commit":
 		return gitCommit(args)
 	case "commitforce":
