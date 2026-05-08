@@ -87,6 +87,8 @@ func dispatch(subcmd string, args []string) error {
 		return gitCommit(append([]string{"--no-verify"}, args...))
 	case "copy":
 		return gitCopy(args)
+	case "count":
+		return git("rev-list", "--count", "HEAD")
 	case "describe":
 		return git("commit", append([]string{"--amend", "--only", "--allow-empty"}, args...)...)
 	case "diffedit":

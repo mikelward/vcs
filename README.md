@@ -89,6 +89,7 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 | `graph` | Show commit graph | `git log --graph` | `hg log --graph` | `jj log` |
 | `changelog` | One-line log | `git log --oneline` | `hg log --template` | `jj log --template` |
 | `show` | Show a commit | `git show` | `hg export` | `jj show` |
+| `count` | Count commits reachable from HEAD | `git rev-list --count HEAD` | `hg log -r ancestors(.)+.` | `jj log -r ancestors(@)\|@` |
 
 ### Navigation
 
