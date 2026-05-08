@@ -202,8 +202,10 @@ func testHgPath(t *testing.T) string {
 		t.Skip("hg not found")
 		return ""
 	}
+	// Force pure-Python mode so broken C extensions don't prevent testing.
+	t.Setenv("HGMODULEPOLICY", "py")
 	if out, err := exec.Command(p, "--version").CombinedOutput(); err != nil {
-		t.Skipf("hg not functional: %v\n%s", err, out)
+		t.Fatalf("hg not functional even with HGMODULEPOLICY=py: %v\n%s", err, out)
 	}
 	return p
 }

@@ -48,11 +48,16 @@ func TestMain(m *testing.M) {
 		hgCmd = "hg"
 	}
 
-	// Verify hg is functional before running any tests.
+	// Force pure-Python mode to work around broken C extensions in the
+	// system Mercurial package (e.g. ImportError: cannot import name parsers).
+	os.Setenv("HGMODULEPOLICY", "py")
+
+	// Verify hg is actually functional; fail loudly rather than silently
+	// dropping all test coverage.
 	if out, err := exec.Command(hgCmd, "--version").CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "hg not functional, skipping tests: %v\n%s", err, out)
+		fmt.Fprintf(os.Stderr, "hg not functional: %v\n%s", err, out)
 		os.RemoveAll(dir)
-		os.Exit(0)
+		os.Exit(1)
 	}
 
 	code := m.Run()
