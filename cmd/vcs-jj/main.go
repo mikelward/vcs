@@ -418,11 +418,11 @@ func jjReword(args []string) error {
 }
 
 func jjCount() error {
-	out, err := capture("jj", "--no-pager", "log", "--no-graph", "-r", "ancestors(@)|@", "-T", "\n")
+	out, err := capture("jj", "--no-pager", "log", "--no-graph", "-r", "ancestors(@)|@", "-T", "x")
 	if err != nil {
 		return err
 	}
-	fmt.Println(strings.Count(out, "\n"))
+	fmt.Println(len(out))
 	return nil
 }
 

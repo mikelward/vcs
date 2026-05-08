@@ -372,11 +372,11 @@ func hgGraph(args []string) error {
 }
 
 func hgCount() error {
-	out, err := capture(hgCmd, "--pager", "never", "log", "-r", "ancestors(.)+.", "--template", "\n")
+	out, err := capture(hgCmd, "--pager", "never", "log", "-r", "ancestors(.)+.", "--template", "x")
 	if err != nil {
 		return err
 	}
-	fmt.Println(strings.Count(out, "\n"))
+	fmt.Println(len(out))
 	return nil
 }
 

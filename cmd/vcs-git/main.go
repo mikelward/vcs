@@ -88,7 +88,7 @@ func dispatch(subcmd string, args []string) error {
 	case "copy":
 		return gitCopy(args)
 	case "count":
-		return git("rev-list", "--count", "HEAD")
+		return gitCount()
 	case "describe":
 		return git("commit", append([]string{"--amend", "--only", "--allow-empty"}, args...)...)
 	case "diffedit":
@@ -471,4 +471,13 @@ func gitFix(args []string) error {
 		}
 	}
 	return git("fix", args...)
+}
+
+func gitCount() error {
+	// Shallow clones have truncated history; rev-list --count would return a
+	// wrong number. Error rather than silently mislead.
+	if out, err := capture("git", "rev-parse", "--is-shallow-repository"); err == nil && strings.TrimSpace(out) == "true" {
+		return fmt.Errorf("count: shallow clone, history is incomplete (run: git fetch --unshallow)")
+	}
+	return git("rev-list", "--count", "HEAD")
 }
