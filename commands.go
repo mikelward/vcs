@@ -19,6 +19,7 @@ var Commands = []string{
 	"changelog",
 	"changes",
 	"checkout",
+	"cherrypick",
 	"commit",
 	"commitforce",
 	"copy",

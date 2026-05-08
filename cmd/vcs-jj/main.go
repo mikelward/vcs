@@ -117,6 +117,8 @@ func dispatch(subcmd string, args []string) error {
 		return jj(append([]string{"diff"}, args...)...)
 	case "checkout", "goto":
 		return jj(append([]string{"new"}, args...)...)
+	case "cherrypick":
+		return jj(append([]string{"duplicate"}, args...)...)
 	case "commit":
 		return jj(append([]string{"commit"}, args...)...)
 	case "commitforce":
