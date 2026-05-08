@@ -193,14 +193,19 @@ func runGit(t *testing.T, dir string, args ...string) {
 
 func testHgPath(t *testing.T) string {
 	t.Helper()
-	if p, err := exec.LookPath("chg"); err == nil {
-		return p
+	var p string
+	if q, err := exec.LookPath("chg"); err == nil {
+		p = q
+	} else if q, err := exec.LookPath("hg"); err == nil {
+		p = q
+	} else {
+		t.Skip("hg not found")
+		return ""
 	}
-	if p, err := exec.LookPath("hg"); err == nil {
-		return p
+	if out, err := exec.Command(p, "--version").CombinedOutput(); err != nil {
+		t.Skipf("hg not functional: %v\n%s", err, out)
 	}
-	t.Skip("hg not found")
-	return ""
+	return p
 }
 
 func runHg(t *testing.T, hgPath, dir string, args ...string) {
@@ -555,12 +560,7 @@ func TestGatherJJNotBehind(t *testing.T) {
 }
 
 func TestGatherHGRepo(t *testing.T) {
-	hgCmd := "hg"
-	if p, err := exec.LookPath("chg"); err == nil {
-		hgCmd = p
-	} else if _, err := exec.LookPath("hg"); err != nil {
-		t.Skip("hg not found")
-	}
+	hgCmd := testHgPath(t)
 
 	tmp := t.TempDir()
 	cmd := exec.Command(hgCmd, "init", tmp)

@@ -104,6 +104,9 @@ func writeFile(t *testing.T, dir, name, content string) {
 // newJJRepo creates a colocated jj+git repo and configures a test user.
 func newJJRepo(t *testing.T) string {
 	t.Helper()
+	if _, err := exec.LookPath("jj"); err != nil {
+		t.Skip("jj not found in PATH")
+	}
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
 	cmd := exec.Command("jj", "git", "init", repo)
