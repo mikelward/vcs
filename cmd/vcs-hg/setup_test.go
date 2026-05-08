@@ -48,6 +48,13 @@ func TestMain(m *testing.M) {
 		hgCmd = "hg"
 	}
 
+	// Verify hg is functional before running any tests.
+	if out, err := exec.Command(hgCmd, "--version").CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "hg not functional, skipping tests: %v\n%s", err, out)
+		os.RemoveAll(dir)
+		os.Exit(0)
+	}
+
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
