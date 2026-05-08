@@ -348,6 +348,33 @@ func TestCount(t *testing.T) {
 	}
 }
 
+func TestCountShallow(t *testing.T) {
+	remote, local := newGitRepo(t)
+
+	// Push a second commit so depth-1 actually truncates history.
+	writeFile(t, local, "s.txt", "x")
+	gitRun(t, local, "add", "s.txt")
+	gitRun(t, local, "commit", "-m", "second commit")
+	gitRun(t, local, "push")
+
+	root := t.TempDir()
+	shallow := filepath.Join(root, "shallow")
+	// Use file:// so git treats this as a network clone and respects --depth.
+	// Plain local paths silently ignore --depth.
+	cmd := exec.Command("git", "clone", "--depth", "1", "-q", "file://"+remote, shallow)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("shallow clone: %v\n%s", err, out)
+	}
+
+	_, err := runDispatch(t, shallow, "count")
+	if err == nil {
+		t.Error("count in shallow clone: want error, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "shallow") {
+		t.Errorf("count shallow error should mention 'shallow': %v", err)
+	}
+}
+
 //
 // commit / amend / reword / describe / recommit
 //
