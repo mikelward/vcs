@@ -139,8 +139,9 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 | `pull` | Fetch and update | `git pull --rebase --log` | `hg pull --update --rebase` | `jj git fetch` / `jj sync` |
 | `push` | Push changes | `git push` | `hg push` | `jj git push` / `jj upload` |
 | `fastforward` | Fast-forward only | `git pull --ff-only` | `hg sync --tool=internal:fail` | `jj git fetch` |
-| `incoming` | Show what would be pulled | `git log HEAD..@{upstream}` | `hg incoming` | `jj op log` |
-| `outgoing` | Show what would be pushed | `git log HEAD --not --remotes` | `hg log -r draft()` | `jj log -r mutable()` |
+| `incoming` / `unpulled` | Show what would be pulled | `git log HEAD..@{upstream}` | `hg incoming` | `jj op log` |
+| `outgoing` / `unpushed` | Show what would be pushed | `git log HEAD --not --remotes` | `hg log -r draft()` | `jj log -r mutable()` |
+| `unmerged` | List branches not merged to main | `git branch -v --no-merged origin/main` | `hg log -r "bookmark() and draft()"` | `jj log -r "bookmarks() & mutable()"` |
 | `pending` | Show uncommitted/unpushed | outgoing or status | `hg status` | `jj log -r mutable()` |
 | `review` / `upload` | Push and create PR | `git push` + `gh pr create` | (not supported) | `jj git push` + `gh pr create` |
 | `submit` | Push to remote | `git push` | `hg submit` | `jj git push` / `jj submit` |

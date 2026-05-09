@@ -173,7 +173,7 @@ func dispatch(subcmd string, args []string) error {
 		return hg("histedit")
 	case "ignore":
 		return hgIgnore(args)
-	case "incoming":
+	case "incoming", "unpulled":
 		return hg(append([]string{"incoming", "--template", "{onelinesummary}\\n"}, args...)...)
 	case "lint":
 		return hg(append([]string{"lint"}, args...)...)
@@ -185,7 +185,7 @@ func dispatch(subcmd string, args []string) error {
 		return hg(append([]string{"rename"}, args...)...)
 	case "next":
 		return hg(append([]string{"update", "-r", "min(children(.))"}, args...)...)
-	case "outgoing":
+	case "outgoing", "unpushed":
 		return hgOutgoing(args)
 	case "pending":
 		return hg("status")
@@ -240,6 +240,8 @@ func dispatch(subcmd string, args []string) error {
 		return hg(append([]string{"undo"}, args...)...)
 	case "unknown":
 		return hg("status", "--unknown", "--deleted")
+	case "unmerged":
+		return hgUnmerged(args)
 	case "untrack":
 		return hg(append([]string{"forget"}, args...)...)
 	case "upload":
@@ -274,6 +276,11 @@ func hgMap(args []string) error {
 
 func hgOutgoing(args []string) error {
 	return hg(append([]string{"--quiet", "log", "-r", "draft() and not obsolete()", "--template", "{onelinesummary}\\n"}, args...)...)
+}
+
+func hgUnmerged(args []string) error {
+	// Show bookmarks pointing at draft (not-yet-published) commits.
+	return hg(append([]string{"log", "-r", "bookmark() and draft() and not obsolete()", "--template", "{bookmarks}\t{node|short} {desc|firstline}\n"}, args...)...)
 }
 
 func hgChange(args []string) error {

@@ -191,6 +191,44 @@ func TestGraphPushedFeatureBranch(t *testing.T) {
 	}
 }
 
+func TestUnmerged(t *testing.T) {
+	_, local := newGitRepo(t)
+
+	// No unmerged branches yet.
+	out, _ := runDispatch(t, local, "unmerged")
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("unmerged on clean repo: %q", out)
+	}
+
+	// Push a feature branch without merging it.
+	gitRun(t, local, "checkout", "-q", "-b", "feature")
+	writeFile(t, local, "f.txt", "x")
+	gitRun(t, local, "add", "f.txt")
+	gitRun(t, local, "commit", "-m", "feature commit")
+	gitRun(t, local, "push", "origin", "feature")
+	gitRun(t, local, "checkout", "-q", "main")
+
+	out, _ = runDispatch(t, local, "unmerged")
+	if !strings.Contains(out, "feature") {
+		t.Errorf("unmerged missing feature branch: %q", out)
+	}
+	if strings.Contains(out, "main") {
+		t.Errorf("unmerged should not list main: %q", out)
+	}
+
+	// unpushed is an alias for outgoing, not unmerged — test that separately.
+	out, _ = runDispatch(t, local, "unpushed")
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("unpushed after push to main: %q", out)
+	}
+
+	// unpulled is an alias for incoming.
+	out, _ = runDispatch(t, local, "unpulled")
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("unpulled on clean repo: %q", out)
+	}
+}
+
 func TestMap(t *testing.T) {
 	_, local := newGitRepo(t)
 	writeFile(t, local, "m.txt", "x")
