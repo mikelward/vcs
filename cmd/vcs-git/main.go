@@ -144,7 +144,7 @@ func dispatch(subcmd string, args []string) error {
 	case "prev":
 		return git("checkout", "HEAD~")
 	case "pull":
-		return git("pull", append([]string{"--rebase", "--log"}, args...)...)
+		return gitPull(args)
 	case "push":
 		return git("push", args...)
 	case "rebase":
@@ -237,6 +237,13 @@ func splitGitArgs(args []string) (flags []string, files []string) {
 		i++
 	}
 	return
+}
+
+func gitPull(args []string) error {
+	if err := git("pack-refs", "--all"); err != nil {
+		return err
+	}
+	return git("pull", append([]string{"--rebase", "--log"}, args...)...)
 }
 
 func gitAmend(args []string) error {
