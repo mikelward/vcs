@@ -461,6 +461,120 @@ func TestDetachedSpawnDryRunSkipsFork(t *testing.T) {
 	}
 }
 
+// TestDetachedSpawnInjectsSSHBatchMode verifies that GIT_SSH_COMMAND is
+// set to 'ssh -o BatchMode=yes' when the caller has not set it, so an
+// SSH passphrase prompt can't hang the orphaned process.
+func TestDetachedSpawnInjectsSSHBatchMode(t *testing.T) {
+	old, hadOld := os.LookupEnv("GIT_SSH_COMMAND")
+	os.Unsetenv("GIT_SSH_COMMAND")
+	if hadOld {
+		t.Cleanup(func() { os.Setenv("GIT_SSH_COMMAND", old) })
+	} else {
+		t.Cleanup(func() { os.Unsetenv("GIT_SSH_COMMAND") })
+	}
+
+	// Use a named pipe so ReadFile blocks until the child writes,
+	// making the wait deterministic with no sleep.
+	fifo := filepath.Join(t.TempDir(), "sshcmd")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := detachedSpawn("sh", []string{"-c", `printf '%s' "$GIT_SSH_COMMAND" > ` + fifo}, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(fifo) // blocks until child writes and closes its end
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "BatchMode=yes") {
+		t.Errorf("GIT_SSH_COMMAND = %q, want ssh -o BatchMode=yes", string(data))
+	}
+}
+
+// TestDetachedSpawnPreservesCustomSSHCommand verifies that a
+// user-defined GIT_SSH_COMMAND (e.g. a custom SSH wrapper) is left
+// intact and not overridden by autofetch.
+func TestDetachedSpawnPreservesCustomSSHCommand(t *testing.T) {
+	t.Setenv("GIT_SSH_COMMAND", "my-custom-ssh")
+
+	fifo := filepath.Join(t.TempDir(), "sshcmd")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := detachedSpawn("sh", []string{"-c", `printf '%s' "$GIT_SSH_COMMAND" > ` + fifo}, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(fifo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "my-custom-ssh") {
+		t.Errorf("GIT_SSH_COMMAND = %q, want my-custom-ssh", string(data))
+	}
+}
+
+// TestDetachedSpawnPreservesGITSSH verifies that a user-defined GIT_SSH
+// wrapper is left intact: injecting GIT_SSH_COMMAND would take precedence
+// and silently bypass the configured wrapper.
+func TestDetachedSpawnPreservesGITSSH(t *testing.T) {
+	old, hadOld := os.LookupEnv("GIT_SSH_COMMAND")
+	os.Unsetenv("GIT_SSH_COMMAND")
+	if hadOld {
+		t.Cleanup(func() { os.Setenv("GIT_SSH_COMMAND", old) })
+	} else {
+		t.Cleanup(func() { os.Unsetenv("GIT_SSH_COMMAND") })
+	}
+	t.Setenv("GIT_SSH", "my-ssh-wrapper")
+
+	fifo := filepath.Join(t.TempDir(), "sshcmd")
+	if err := syscall.Mkfifo(fifo, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := detachedSpawn("sh", []string{"-c", `printf '%s' "$GIT_SSH_COMMAND" > ` + fifo}, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(fifo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "" {
+		t.Errorf("GIT_SSH_COMMAND = %q, want empty (GIT_SSH is set)", string(data))
+	}
+}
+
+// TestCoreSSHCommandConfigured verifies that coreSSHCommandConfigured
+// detects a repo-level core.sshCommand setting and returns false for
+// non-git VCS binaries.
+func TestCoreSSHCommandConfigured(t *testing.T) {
+	repo := t.TempDir()
+	gitInit(t, repo)
+
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repo); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
+
+	if coreSSHCommandConfigured("git") {
+		t.Error("expected false before core.sshCommand is set")
+	}
+
+	gitRun(t, repo, "config", "core.sshCommand", "ssh -i /custom/key")
+
+	if !coreSSHCommandConfigured("git") {
+		t.Error("expected true after core.sshCommand is set")
+	}
+	if !coreSSHCommandConfigured("jj") {
+		t.Error("expected true for jj (also uses git config)")
+	}
+	if coreSSHCommandConfigured("hg") {
+		t.Error("expected false for hg (not a git-like VCS)")
+	}
+}
+
 // gitInit / gitCommit / gitRun: tiny helpers for the worktree test
 // above. Inline rather than imported to keep autofetch's test
 // dependencies tight (just stdlib + runner).

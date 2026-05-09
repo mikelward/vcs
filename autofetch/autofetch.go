@@ -260,6 +260,19 @@ func gitMarkerPath(rootDir string) string {
 	return resolved
 }
 
+// coreSSHCommandConfigured reports whether git's core.sshCommand is set
+// for the current directory. It only checks for git-like binaries (git,
+// jj) since GIT_SSH_COMMAND is irrelevant to hg. Returns false on any
+// error so the caller falls back to injecting the safe default.
+func coreSSHCommandConfigured(name string) bool {
+	base := filepath.Base(name)
+	if base != "git" && base != "jj" {
+		return false
+	}
+	out, err := exec.Command("git", "config", "core.sshCommand").Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
 // detachedSpawn launches name+args in a new session with no stdio,
 // then returns immediately without waiting. The child becomes its
 // own session leader (Setsid) so it isn't killed when the calling
@@ -270,21 +283,26 @@ func gitMarkerPath(rootDir string) string {
 // spawned, so users can preview prompt-hook behavior without
 // triggering a real network fetch.
 //
-// GIT_TERMINAL_PROMPT=0 is set on every spawn so an HTTPS-creds
-// prompt can't hang the orphaned process indefinitely. jj uses git's
-// network layer underneath, so the same env var helps it too; the
-// var is harmless to hg.
-//
-// TODO: also set GIT_SSH_COMMAND='ssh -o BatchMode=yes' (or equivalent)
-// so SSH key passphrases can't prompt and hang the orphaned process.
-// GIT_TERMINAL_PROMPT=0 only covers HTTPS credential prompts.
+// GIT_TERMINAL_PROMPT=0 and GIT_SSH_COMMAND='ssh -o BatchMode=yes'
+// are set on every spawn so neither an HTTPS credentials prompt nor
+// an SSH passphrase prompt can hang the orphaned process indefinitely.
+// jj uses git's network layer underneath, so both vars help it too;
+// they are harmless to hg. GIT_SSH_COMMAND is only injected when none
+// of GIT_SSH_COMMAND, GIT_SSH, or core.sshCommand is already set —
+// GIT_SSH_COMMAND takes precedence over both the older GIT_SSH env var
+// and the core.sshCommand config key, so injecting would silently shadow
+// a custom identity file, port, or ProxyCommand that the user relies on.
 func detachedSpawn(name string, args []string, extraFiles []*os.File) error {
 	if runner.DryRun {
 		runner.PrintCommand(name, args)
 		return nil
 	}
 	cmd := exec.Command(name, args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if os.Getenv("GIT_SSH_COMMAND") == "" && os.Getenv("GIT_SSH") == "" && !coreSSHCommandConfigured(name) {
+		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+	}
+	cmd.Env = env
 	cmd.Stdin = nil
 	cmd.Stdout = nil
 	cmd.Stderr = nil
