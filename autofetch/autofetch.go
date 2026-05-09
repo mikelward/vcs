@@ -19,6 +19,7 @@
 package autofetch
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mikelward/vcs/internal/fetchlock"
 	"github.com/mikelward/vcs/runner"
 	"github.com/mikelward/vcs/vcsdetect"
 )
@@ -87,7 +89,10 @@ type Options struct {
 	// Spawn is called to launch the fetch command. Defaults to
 	// detachedSpawn (Setsid + exec.Command + Start, no Wait).
 	// Injected by tests to record (name, args) without forking.
-	Spawn func(name string, args []string) error
+	// extraFiles are passed to the child via cmd.ExtraFiles so that
+	// inherited file descriptors (e.g. a fetch lock) remain open until
+	// the child exits.
+	Spawn func(name string, args []string, extraFiles []*os.File) error
 }
 
 // Run executes one auto-fetch decision: detect the VCS in cwd, check
@@ -110,6 +115,7 @@ func Run(opts *Options) (Action, error) {
 	if opts.Spawn == nil {
 		opts.Spawn = detachedSpawn
 	}
+
 
 	dir := opts.Cwd
 	if dir == "" {
@@ -137,8 +143,31 @@ func Run(opts *Options) (Action, error) {
 		return ActionFresh, nil
 	}
 
-	if err := opts.Spawn(fetchName, fetchArgs); err != nil {
+	// For git, hold the fetch lock so a concurrent `vcs pull` (which
+	// also runs an internal git fetch) can't race us on FETCH_HEAD.
+	// We pass the lock fd to the child via ExtraFiles; the OS releases
+	// it when git exits. Non-blocking: if pull already holds the lock,
+	// skip — pull is fetching for us.
+	var extraFiles []*os.File
+	if info.VCS == "git" {
+		lockFile, lockErr := fetchlock.TryLock(filepath.Dir(marker))
+		if errors.Is(lockErr, fetchlock.ErrLocked) {
+			return ActionFresh, nil
+		}
+		if lockErr == nil {
+			extraFiles = []*os.File{lockFile}
+		}
+		// Other errors (permissions etc.): proceed without lock.
+	}
+
+	if err := opts.Spawn(fetchName, fetchArgs, extraFiles); err != nil {
+		for _, f := range extraFiles {
+			f.Close()
+		}
 		return ActionFetched, fmt.Errorf("spawn %s: %w", fetchName, err)
+	}
+	for _, f := range extraFiles {
+		f.Close() // parent releases its copy; child holds the lock until it exits
 	}
 	return ActionFetched, nil
 }
@@ -231,7 +260,6 @@ func gitMarkerPath(rootDir string) string {
 	return resolved
 }
 
-
 // detachedSpawn launches name+args in a new session with no stdio,
 // then returns immediately without waiting. The child becomes its
 // own session leader (Setsid) so it isn't killed when the calling
@@ -246,7 +274,11 @@ func gitMarkerPath(rootDir string) string {
 // prompt can't hang the orphaned process indefinitely. jj uses git's
 // network layer underneath, so the same env var helps it too; the
 // var is harmless to hg.
-func detachedSpawn(name string, args []string) error {
+//
+// TODO: also set GIT_SSH_COMMAND='ssh -o BatchMode=yes' (or equivalent)
+// so SSH key passphrases can't prompt and hang the orphaned process.
+// GIT_TERMINAL_PROMPT=0 only covers HTTPS credential prompts.
+func detachedSpawn(name string, args []string, extraFiles []*os.File) error {
 	if runner.DryRun {
 		runner.PrintCommand(name, args)
 		return nil
@@ -257,5 +289,6 @@ func detachedSpawn(name string, args []string) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.ExtraFiles = extraFiles
 	return cmd.Start()
 }

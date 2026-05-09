@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/mikelward/vcs/internal/fetchlock"
 	"github.com/mikelward/vcs/runner"
 	"github.com/mikelward/vcs/version"
 )
@@ -245,14 +246,18 @@ func gitPull(args []string) error {
 	if err := git("pack-refs", "--all"); err != nil {
 		return err
 	}
-	// Fetch explicitly then rebase onto the tracking branch so we never touch
-	// FETCH_HEAD. A concurrent background fetch writing FETCH_HEAD at the same
-	// time as git-pull would corrupt it, producing "Cannot rebase onto multiple
-	// branches".
-	if err := git("fetch", args...); err != nil {
-		return err
+	// Serialise with the background auto-fetch so neither process's
+	// git fetch races the other on FETCH_HEAD ("Cannot rebase onto
+	// multiple branches"). Use --git-dir (worktree-specific) so the
+	// lock path matches what auto-fetch uses even in linked worktrees.
+	// Best-effort: if we can't determine the gitdir or create the lock
+	// file, proceed without the lock.
+	if gitDir, err := capture("git", "rev-parse", "--git-dir"); err == nil {
+		if lock, err := fetchlock.Lock(gitDir); err == nil {
+			defer lock.Close()
+		}
 	}
-	return git("rebase", "@{upstream}")
+	return git("pull", append([]string{"--rebase", "--log"}, args...)...)
 }
 
 func gitAmend(args []string) error {
