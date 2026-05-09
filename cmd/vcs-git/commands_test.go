@@ -315,7 +315,7 @@ func TestOutgoingIncoming(t *testing.T) {
 	}
 }
 
-func TestPullUsesRebaseLog(t *testing.T) {
+func TestPullFetchesThenRebasesUpstream(t *testing.T) {
 	old := runner.DryRun
 	runner.DryRun = true
 	defer func() { runner.DryRun = old }()
@@ -324,8 +324,31 @@ func TestPullUsesRebaseLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pull: %v", err)
 	}
-	if !strings.Contains(out, "git --no-pager pull --rebase --log") {
-		t.Errorf("pull should pass --rebase --log to git; got: %q", out)
+	if !strings.Contains(out, "git --no-pager fetch") {
+		t.Errorf("pull should run git fetch; got: %q", out)
+	}
+	if !strings.Contains(out, "@{upstream}") {
+		t.Errorf("pull should rebase onto @{upstream}; got: %q", out)
+	}
+	if strings.Contains(out, "pull") {
+		t.Errorf("pull should not invoke git pull (FETCH_HEAD race); got: %q", out)
+	}
+}
+
+func TestPullPassesRefspecArgsToFetch(t *testing.T) {
+	old := runner.DryRun
+	runner.DryRun = true
+	defer func() { runner.DryRun = old }()
+
+	out, err := runDispatch(t, t.TempDir(), "pull", "origin", "main")
+	if err != nil {
+		t.Fatalf("pull origin main: %v", err)
+	}
+	if !strings.Contains(out, "git --no-pager fetch origin main") {
+		t.Errorf("pull should pass repository/refspec to git fetch; got: %q", out)
+	}
+	if strings.Contains(out, "rebase origin") || strings.Contains(out, "rebase main") {
+		t.Errorf("pull should not pass repository/refspec to git rebase; got: %q", out)
 	}
 }
 
