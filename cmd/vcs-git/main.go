@@ -245,7 +245,14 @@ func gitPull(args []string) error {
 	if err := git("pack-refs", "--all"); err != nil {
 		return err
 	}
-	return git("pull", append([]string{"--rebase", "--log"}, args...)...)
+	// Fetch explicitly then rebase onto the tracking branch so we never touch
+	// FETCH_HEAD. A concurrent background fetch writing FETCH_HEAD at the same
+	// time as git-pull would corrupt it, producing "Cannot rebase onto multiple
+	// branches".
+	if err := git("fetch", args...); err != nil {
+		return err
+	}
+	return git("rebase", "@{upstream}")
 }
 
 func gitAmend(args []string) error {
