@@ -386,7 +386,7 @@ func TestRunGitWorktreeResolvesMarker(t *testing.T) {
 	// what the production gitMarkerPath() probes regardless of
 	// version.
 	gpCmd := exec.Command("git", "-C", wt, "rev-parse", "--git-path", "FETCH_HEAD")
-	gpCmd.Env = cleanGitEnv()
+	gpCmd.Env = runner.CleanGitEnv()
 	gitPathOut, err := gpCmd.Output()
 	if err != nil {
 		t.Fatalf("git rev-parse --git-path FETCH_HEAD: %v", err)
@@ -449,12 +449,7 @@ func gitCommit(t *testing.T, dir, msg string) {
 func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	// cleanGitEnv strips GIT_DIR/GIT_INDEX_FILE/etc. so the child git
-	// operates on dir's repo regardless of how this test process was
-	// launched — most relevantly, from a pre-commit hook where git
-	// exports those vars and would otherwise redirect every child
-	// `git ...` invocation back at the hook's repo.
-	cmd.Env = append(cleanGitEnv(),
+	cmd.Env = append(runner.CleanGitEnv(),
 		"GIT_AUTHOR_NAME=Test",
 		"GIT_AUTHOR_EMAIL=t@t",
 		"GIT_COMMITTER_NAME=Test",

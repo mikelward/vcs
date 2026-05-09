@@ -131,6 +131,7 @@ func gitResolveFile(rootDir, file string) string {
 		return filepath.Join(dotGit, file)
 	}
 	cmd := exec.Command("git", "-C", rootDir, "rev-parse", "--git-path", file)
+	cmd.Env = runner.CleanGitEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		return filepath.Join(dotGit, file)

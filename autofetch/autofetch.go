@@ -216,13 +216,7 @@ func gitMarkerPath(rootDir string) string {
 		return filepath.Join(dotGit, "FETCH_HEAD")
 	}
 	cmd := exec.Command("git", "-C", rootDir, "rev-parse", "--git-path", "FETCH_HEAD")
-	// Strip inherited GIT_* state vars so the child git resolves
-	// against rootDir's repo, not the surrounding env's. Without
-	// this, `vcs auto-fetch` invoked from inside a git hook (which
-	// exports GIT_DIR/GIT_INDEX_FILE/etc. pointing at the hook's
-	// repo) would resolve FETCH_HEAD against that repo instead of
-	// the cwd's.
-	cmd.Env = cleanGitEnv()
+	cmd.Env = runner.CleanGitEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		// Fall back to the naive path; markerStale will treat it as
@@ -237,45 +231,6 @@ func gitMarkerPath(rootDir string) string {
 	return resolved
 }
 
-// cleanGitEnv returns os.Environ() with GIT_* state vars stripped.
-// Child git invocations use this so they resolve against the cwd
-// (or `-C` arg) instead of inheriting GIT_DIR/GIT_INDEX_FILE/etc.
-// from the surrounding env. Common cases that set those vars:
-//
-//   - git hooks (pre-commit, post-merge, ...) export GIT_DIR
-//   - `git submodule foreach` exports GIT_DIR per submodule
-//   - test runners launched from a hook propagate the hook's env
-//
-// Auth-related vars (GIT_TERMINAL_PROMPT, GIT_SSH_*, GIT_ASK_PASS) and
-// trace vars (GIT_TRACE*) are kept — only the state-pointing vars
-// that override repo discovery are stripped.
-func cleanGitEnv() []string {
-	stripPrefixes := []string{
-		"GIT_DIR=",
-		"GIT_WORK_TREE=",
-		"GIT_INDEX_FILE=",
-		"GIT_NAMESPACE=",
-		"GIT_PREFIX=",
-		"GIT_COMMON_DIR=",
-		"GIT_OBJECT_DIRECTORY=",
-		"GIT_ALTERNATE_OBJECT_DIRECTORIES=",
-	}
-	env := os.Environ()
-	out := env[:0:0]
-	for _, kv := range env {
-		drop := false
-		for _, p := range stripPrefixes {
-			if strings.HasPrefix(kv, p) {
-				drop = true
-				break
-			}
-		}
-		if !drop {
-			out = append(out, kv)
-		}
-	}
-	return out
-}
 
 // detachedSpawn launches name+args in a new session with no stdio,
 // then returns immediately without waiting. The child becomes its

@@ -62,6 +62,39 @@ func ExitCode(err error) int {
 	return 1
 }
 
+// CleanGitEnv returns os.Environ() with GIT_* repo-state variables stripped
+// so child git processes resolve against the -C dir (or cwd) rather than
+// inheriting GIT_DIR/GIT_INDEX_FILE/etc. from a surrounding hook or submodule
+// env. Auth vars (GIT_SSH_*, GIT_TERMINAL_PROMPT) and trace vars (GIT_TRACE*)
+// are preserved.
+func CleanGitEnv() []string {
+	stripPrefixes := []string{
+		"GIT_DIR=",
+		"GIT_WORK_TREE=",
+		"GIT_INDEX_FILE=",
+		"GIT_NAMESPACE=",
+		"GIT_PREFIX=",
+		"GIT_COMMON_DIR=",
+		"GIT_OBJECT_DIRECTORY=",
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES=",
+	}
+	env := os.Environ()
+	out := env[:0:0]
+	for _, kv := range env {
+		drop := false
+		for _, p := range stripPrefixes {
+			if strings.HasPrefix(kv, p) {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // FindCommand looks for a command on PATH and returns its full path,
 // or empty string if not found.
 func FindCommand(name string) string {
