@@ -314,18 +314,36 @@ func gitBranch() error {
 func gitGraph(args []string) error {
 	format := "--pretty=format:%C(auto)%h%C(auto)%d %s"
 	if len(args) == 0 {
-		// Show all local unpushed commits (across every branch plus the
-		// detached HEAD if any) together with their public fork points.
-		// Without --boundary and the "all local branches minus remotes"
-		// selection, a stacked chain renders as a disconnected stick and
-		// sibling branches vanish entirely, hiding the tree structure.
-		err := git("log", "--graph", "--boundary", format, "--branches", "HEAD", "--not", "--remotes")
+		// Show all commits not yet in the integration branch (across every
+		// local branch plus detached HEAD) together with their public fork
+		// points. Comparing against the integration branch (origin/main or
+		// equivalent) rather than all remotes means pushed-but-not-merged
+		// feature branches still appear. --boundary includes the public
+		// fork points so sibling branches render as a tree, not a stick.
+		notSpec := originNotSpec()
+		logArgs := append([]string{"--graph", "--boundary", format, "--branches", "HEAD"}, notSpec...)
+		err := git("log", logArgs...)
 		if err != nil {
 			return git("log", "--graph", format)
 		}
 		return nil
 	}
 	return git("log", append([]string{"--graph", format}, args...)...)
+}
+
+// originNotSpec returns the --not <ref> args that select the integration
+// branch base. It prefers origin/HEAD (the remote's default branch pointer),
+// then falls back to origin/main, origin/master, and finally --remotes.
+func originNotSpec() []string {
+	if out, err := capture("git", "rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil && out != "origin/HEAD" {
+		return []string{"--not", out}
+	}
+	for _, ref := range []string{"origin/main", "origin/master"} {
+		if _, err := capture("git", "rev-parse", "--verify", ref); err == nil {
+			return []string{"--not", ref}
+		}
+	}
+	return []string{"--not", "--remotes"}
 }
 
 func gitFetchtime() error {

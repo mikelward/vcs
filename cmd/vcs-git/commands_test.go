@@ -170,6 +170,27 @@ func TestGraphSiblings(t *testing.T) {
 	}
 }
 
+// TestGraphPushedFeatureBranch verifies that a feature branch that has been
+// pushed to origin (but not merged to origin/main) still appears in the graph.
+// With --not --remotes it would vanish once pushed; comparing against the
+// integration branch (origin/main) keeps it visible until it lands.
+func TestGraphPushedFeatureBranch(t *testing.T) {
+	_, local := newGitRepo(t)
+
+	// Create a feature branch and push it without merging to main.
+	gitRun(t, local, "checkout", "-q", "-b", "feature")
+	writeFile(t, local, "f.txt", "x")
+	gitRun(t, local, "add", "f.txt")
+	gitRun(t, local, "commit", "-m", "feature work")
+	gitRun(t, local, "push", "origin", "feature")
+	gitRun(t, local, "checkout", "-q", "main")
+
+	out, _ := runDispatch(t, local, "graph")
+	if !strings.Contains(out, "feature work") {
+		t.Errorf("graph should show pushed-but-unmerged feature branch: %q", out)
+	}
+}
+
 func TestMap(t *testing.T) {
 	_, local := newGitRepo(t)
 	writeFile(t, local, "m.txt", "x")
