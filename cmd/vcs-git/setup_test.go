@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mikelward/vcs/internal/testenv"
 )
 
 // TestMain chdirs to an isolated temp directory before running any tests,
@@ -23,16 +25,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "setup: Chdir:", err)
 		os.Exit(1)
 	}
-	// Clear environment that leaks in when tests are run from a git hook.
-	os.Unsetenv("GIT_DIR")
-	os.Unsetenv("GIT_INDEX_FILE")
-	os.Unsetenv("GIT_WORK_TREE")
-	os.Unsetenv("GIT_PREFIX")
-	// Override init.templatedir: the user's template may install hooks
-	// (e.g. a pre-commit) that would run against test repos.
-	emptyTemplate := filepath.Join(dir, "empty-template")
-	os.MkdirAll(emptyTemplate, 0755)
-	os.Setenv("GIT_TEMPLATE_DIR", emptyTemplate)
+	testenv.UnsetGitEnv(dir)
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
