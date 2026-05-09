@@ -109,6 +109,26 @@ func TestOutgoing(t *testing.T) {
 	}
 }
 
+func TestUnmerged(t *testing.T) {
+	repo := newJJRepo(t)
+
+	// No bookmarks: unmerged is empty.
+	out, _ := runDispatch(t, repo, "unmerged")
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("unmerged on clean repo: %q", out)
+	}
+
+	// Create a commit on a bookmark.
+	writeFile(t, repo, "f.txt", "x\n")
+	jjRun(t, repo, "commit", "-m", "feature commit")
+	jjRun(t, repo, "bookmark", "create", "feature", "-r", "@-")
+
+	out, _ = runDispatch(t, repo, "unmerged")
+	if !strings.Contains(out, "feature") {
+		t.Errorf("unmerged missing feature bookmark: %q", out)
+	}
+}
+
 func TestPending(t *testing.T) {
 	repo := newJJRepo(t)
 	writeFile(t, repo, "f.txt", "x\n")

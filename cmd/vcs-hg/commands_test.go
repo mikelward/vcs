@@ -124,6 +124,27 @@ func TestOutgoingIncoming(t *testing.T) {
 	}
 }
 
+func TestUnmerged(t *testing.T) {
+	_, local := newHgRepo(t)
+
+	// No bookmarks: unmerged is empty.
+	out, _ := runDispatch(t, local, "unmerged")
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("unmerged on clean repo: %q", out)
+	}
+
+	// Create a draft commit on a bookmark.
+	hgRun(t, local, "bookmark", "feature")
+	writeFile(t, local, "f.txt", "x\n")
+	hgRun(t, local, "add", "f.txt")
+	hgRun(t, local, "commit", "-m", "feature commit", "-u", "test <t@t>")
+
+	out, _ = runDispatch(t, local, "unmerged")
+	if !strings.Contains(out, "feature") {
+		t.Errorf("unmerged missing feature bookmark: %q", out)
+	}
+}
+
 func TestPending(t *testing.T) {
 	_, local := newHgRepo(t)
 	writeFile(t, local, "file.txt", "modified\n")

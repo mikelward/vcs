@@ -119,7 +119,7 @@ func dispatch(subcmd string, args []string) error {
 		return git("rebase", "--interactive")
 	case "ignore":
 		return gitIgnore(args)
-	case "incoming":
+	case "incoming", "unpulled":
 		return git("log", append([]string{"--oneline", "HEAD..@{upstream}"}, args...)...)
 	case "lint":
 		return git("lint", args...)
@@ -131,7 +131,7 @@ func dispatch(subcmd string, args []string) error {
 		return git("mv", args...)
 	case "next":
 		return gitNext()
-	case "outgoing":
+	case "outgoing", "unpushed":
 		return gitOutgoing(args)
 	case "pending":
 		return gitPending(args)
@@ -185,6 +185,8 @@ func dispatch(subcmd string, args []string) error {
 		return git("reset", "--mixed", "HEAD~")
 	case "unknown":
 		return gitUnknown()
+	case "unmerged":
+		return gitUnmerged(args)
 	case "untrack":
 		return git("rm", append([]string{"--cached"}, args...)...)
 	default:
@@ -331,19 +333,36 @@ func gitGraph(args []string) error {
 	return git("log", append([]string{"--graph", format}, args...)...)
 }
 
-// originNotSpec returns the --not <ref> args that select the integration
-// branch base. It prefers origin/HEAD (the remote's default branch pointer),
-// then falls back to origin/main, origin/master, and finally --remotes.
-func originNotSpec() []string {
+// originBase returns the remote integration branch ref (e.g. "origin/main").
+// It prefers origin/HEAD (the remote's default branch pointer), then falls
+// back to origin/main, origin/master. Returns "" if none is found.
+func originBase() string {
 	if out, err := capture("git", "rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil && out != "origin/HEAD" {
-		return []string{"--not", out}
+		return out
 	}
 	for _, ref := range []string{"origin/main", "origin/master"} {
 		if _, err := capture("git", "rev-parse", "--verify", ref); err == nil {
-			return []string{"--not", ref}
+			return ref
 		}
 	}
+	return ""
+}
+
+// originNotSpec returns --not <ref> args for use with git log.
+// Falls back to --not --remotes when no integration branch is found.
+func originNotSpec() []string {
+	if base := originBase(); base != "" {
+		return []string{"--not", base}
+	}
 	return []string{"--not", "--remotes"}
+}
+
+func gitUnmerged(args []string) error {
+	base := originBase()
+	if base != "" {
+		return git("branch", append([]string{"-v", "--no-merged", base}, args...)...)
+	}
+	return git("branch", append([]string{"-v", "--no-merged"}, args...)...)
 }
 
 func gitFetchtime() error {

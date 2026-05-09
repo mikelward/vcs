@@ -149,7 +149,7 @@ func dispatch(subcmd string, args []string) error {
 		return fmt.Errorf("not supported")
 	case "ignore":
 		return jjIgnore(args)
-	case "incoming":
+	case "incoming", "unpulled":
 		return jj(append([]string{"op", "log"}, args...)...)
 	case "lint":
 		return jj(append([]string{"fix"}, args...)...)
@@ -161,7 +161,7 @@ func dispatch(subcmd string, args []string) error {
 		return jjRename(args)
 	case "next":
 		return jj(append([]string{"next"}, args...)...)
-	case "outgoing":
+	case "outgoing", "unpushed":
 		return jjOutgoing(args)
 	case "pending":
 		return jj(append([]string{"log", "-r", "mutable() ~ empty()"}, args...)...)
@@ -213,6 +213,8 @@ func dispatch(subcmd string, args []string) error {
 		return jj(append([]string{"undo"}, args...)...)
 	case "unknown":
 		return jj(append([]string{"file", "list", "--untracked"}, args...)...)
+	case "unmerged":
+		return jjUnmerged(args)
 	case "untrack":
 		return jj(append([]string{"untrack"}, args...)...)
 	default:
@@ -245,6 +247,13 @@ func jjMap(args []string) error {
 
 func jjOutgoing(args []string) error {
 	return jj(append([]string{"log", "--no-graph", "-r", "mutable() ~ empty() ~ ancestors(remote_bookmarks())", "--template", `change_id.shortest() ++ " " ++ description.first_line() ++ "\n"`}, args...)...)
+}
+
+func jjUnmerged(args []string) error {
+	// Show bookmarks at mutable (not-yet-merged) commits.
+	revset := "bookmarks() & mutable() ~ empty()"
+	tmpl := `bookmarks.join(", ") ++ "\t" ++ change_id.shortest() ++ " " ++ description.first_line() ++ "\n"`
+	return jj(append([]string{"log", "--no-graph", "-r", revset, "--template", tmpl}, args...)...)
 }
 
 func jjGraph(args []string) error {
