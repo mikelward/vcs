@@ -136,6 +136,34 @@ func Detect(dir string) (*Info, error) {
 	return info, nil
 }
 
+// gitConfigPath returns the path to the git config file for rootDir, handling
+// worktrees where .git is a pointer file rather than a directory.
+func gitConfigPath(rootDir string) string {
+	dotGit := filepath.Join(rootDir, ".git")
+	fi, err := os.Stat(dotGit)
+	if err != nil || fi.IsDir() {
+		return filepath.Join(dotGit, "config")
+	}
+	// .git is a file: read the gitdir pointer ("gitdir: <path>")
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return filepath.Join(dotGit, "config")
+	}
+	gitdir := strings.TrimPrefix(strings.TrimSpace(string(data)), "gitdir: ")
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(rootDir, gitdir)
+	}
+	// The commondir file points to the shared git dir (written by git worktree).
+	if cd, err := os.ReadFile(filepath.Join(gitdir, "commondir")); err == nil {
+		commonDir := strings.TrimSpace(string(cd))
+		if !filepath.IsAbs(commonDir) {
+			commonDir = filepath.Join(gitdir, commonDir)
+		}
+		return filepath.Join(commonDir, "config")
+	}
+	return filepath.Join(gitdir, "config")
+}
+
 // detectHosting reads the git origin URL and returns the hosting platform.
 func detectHosting(vcsName, rootDir string) string {
 	var configPath string
@@ -143,7 +171,7 @@ func detectHosting(vcsName, rootDir string) string {
 	case "jj":
 		configPath = filepath.Join(rootDir, ".jj", "repo", "store", "git", "config")
 	default:
-		configPath = filepath.Join(rootDir, ".git", "config")
+		configPath = gitConfigPath(rootDir)
 	}
 
 	data, err := os.ReadFile(configPath)

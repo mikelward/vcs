@@ -122,11 +122,31 @@ func getFetchStale(path string) bool {
 	return time.Since(fi.ModTime()) > fetchStaleThreshold
 }
 
+// gitResolveFile returns the absolute path to file within the git dir for
+// rootDir. For normal repos, this is rootDir/.git/file. For worktrees (where
+// .git is a pointer file), git rev-parse --git-path resolves the real location.
+func gitResolveFile(rootDir, file string) string {
+	dotGit := filepath.Join(rootDir, ".git")
+	if fi, err := os.Stat(dotGit); err == nil && fi.IsDir() {
+		return filepath.Join(dotGit, file)
+	}
+	cmd := exec.Command("git", "-C", rootDir, "rev-parse", "--git-path", file)
+	out, err := cmd.Output()
+	if err != nil {
+		return filepath.Join(dotGit, file)
+	}
+	resolved := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(rootDir, resolved)
+	}
+	return resolved
+}
+
 func getBranch(info *vcsdetect.Info) string {
 	switch info.VCS {
 	case "git":
-		// Read .git/HEAD directly to avoid forking.
-		data, err := os.ReadFile(filepath.Join(info.RootDir, ".git", "HEAD"))
+		// Read HEAD directly to avoid forking. gitResolveFile handles worktrees.
+		data, err := os.ReadFile(gitResolveFile(info.RootDir, "HEAD"))
 		if err != nil {
 			return ""
 		}
@@ -270,7 +290,7 @@ func hgSummaryCommitClean(commit string) bool {
 func fetchHeadPath(info *vcsdetect.Info) string {
 	switch info.VCS {
 	case "git":
-		return filepath.Join(info.RootDir, ".git", "FETCH_HEAD")
+		return gitResolveFile(info.RootDir, "FETCH_HEAD")
 	case "jj":
 		return filepath.Join(info.RootDir, ".jj", "repo", "store", "git", "FETCH_HEAD")
 	case "hg":

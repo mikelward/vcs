@@ -183,6 +183,47 @@ func TestClassifyURL(t *testing.T) {
 	}
 }
 
+func TestGitConfigPathWorktree(t *testing.T) {
+	// Simulate a git worktree: .git is a file, commondir points to main git dir.
+	main := t.TempDir()
+	gitDir := filepath.Join(main, ".git")
+	os.Mkdir(gitDir, 0755)
+	config := "[remote \"origin\"]\n\turl = git@github.com:user/repo.git\n"
+	os.WriteFile(filepath.Join(gitDir, "config"), []byte(config), 0666)
+
+	wt := t.TempDir()
+	wtGitDir := filepath.Join(gitDir, "worktrees", "wt")
+	os.MkdirAll(wtGitDir, 0755)
+	os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+wtGitDir+"\n"), 0666)
+	os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../.."), 0666)
+
+	got := gitConfigPath(wt)
+	want := filepath.Join(gitDir, "config")
+	if got != want {
+		t.Errorf("gitConfigPath() in worktree = %q, want %q", got, want)
+	}
+}
+
+func TestDetectHostingGitWorktree(t *testing.T) {
+	// Simulate a git worktree and verify detectHosting reads the main repo config.
+	main := t.TempDir()
+	gitDir := filepath.Join(main, ".git")
+	os.Mkdir(gitDir, 0755)
+	config := "[remote \"origin\"]\n\turl = git@github.com:user/repo.git\n"
+	os.WriteFile(filepath.Join(gitDir, "config"), []byte(config), 0666)
+
+	wt := t.TempDir()
+	wtGitDir := filepath.Join(gitDir, "worktrees", "wt")
+	os.MkdirAll(wtGitDir, 0755)
+	os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+wtGitDir+"\n"), 0666)
+	os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../.."), 0666)
+
+	got := detectHosting("git", wt)
+	if got != "github" {
+		t.Errorf("detectHosting() in worktree = %q, want %q", got, "github")
+	}
+}
+
 func TestDetectHostingFromConfig(t *testing.T) {
 	dir := t.TempDir()
 	gitDir := filepath.Join(dir, ".git")
