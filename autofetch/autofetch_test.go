@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,9 +22,9 @@ type spawnCall struct {
 	args []string
 }
 
-func recordingSpawn() (*[]spawnCall, func(string, []string) error) {
+func recordingSpawn() (*[]spawnCall, func(string, []string, []*os.File) error) {
 	var calls []spawnCall
-	return &calls, func(name string, args []string) error {
+	return &calls, func(name string, args []string, _ []*os.File) error {
 		calls = append(calls, spawnCall{name, append([]string(nil), args...)})
 		return nil
 	}
@@ -347,7 +348,7 @@ func TestRunJJColocatedStale(t *testing.T) {
 // while not duplicating the "we tried" outcome.
 func TestRunSpawnErrorPropagates(t *testing.T) {
 	root := makeRepo(t, ".git")
-	failing := func(string, []string) error { return errors.New("boom") }
+	failing := func(string, []string, []*os.File) error { return errors.New("boom") }
 
 	action, err := Run(&Options{Cwd: root, Spawn: failing})
 	if err == nil {
@@ -415,6 +416,34 @@ func TestRunGitWorktreeResolvesMarker(t *testing.T) {
 	}
 }
 
+// TestRunGitLockHeldSkipsFetch verifies that when vcs pull holds the
+// fetch lock, auto-fetch skips rather than racing on FETCH_HEAD.
+func TestRunGitLockHeldSkipsFetch(t *testing.T) {
+	root := makeRepo(t, ".git")
+	// Simulate a concurrent pull by holding the fetch lock ourselves.
+	lockPath := filepath.Join(root, ".git", "vcs-fetch.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+
+	calls, spawn := recordingSpawn()
+	action, err := Run(&Options{Cwd: root, Spawn: spawn})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFresh {
+		t.Errorf("action = %v, want ActionFresh (lock held, skip fetch)", action)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("got %d spawn calls, want 0", len(*calls))
+	}
+}
+
 // TestDetachedSpawnDryRunSkipsFork covers the global -n/--dry-run
 // flag: detachedSpawn must consult runner.DryRun and skip the fork,
 // otherwise `vcs -n auto-fetch` triggers a real network fetch
@@ -427,7 +456,7 @@ func TestDetachedSpawnDryRunSkipsFork(t *testing.T) {
 	// /no/such/binary would fail loudly if Spawn ran for real (Start
 	// returns ENOENT). Under DryRun we expect a clean nil with no
 	// process started.
-	if err := detachedSpawn("/no/such/binary", []string{"arg"}); err != nil {
+	if err := detachedSpawn("/no/such/binary", []string{"arg"}, nil); err != nil {
 		t.Errorf("detachedSpawn(DryRun=true) error = %v, want nil", err)
 	}
 }
