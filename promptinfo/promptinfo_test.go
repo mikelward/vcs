@@ -459,6 +459,51 @@ func TestGatherGitNotBehind(t *testing.T) {
 	}
 }
 
+func TestGetBranchGitWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	main := initGitRepo(t) // on branch "main"
+	runGit(t, main, "branch", "feature")
+
+	wtDir := filepath.Join(t.TempDir(), "wt")
+	runGit(t, main, "worktree", "add", wtDir, "feature")
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: wtDir}
+	got := getBranch(info)
+	if got != "feature" {
+		t.Errorf("getBranch() in worktree = %q, want %q", got, "feature")
+	}
+}
+
+func TestFetchHeadPathGitWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	main := initGitRepo(t)
+	runGit(t, main, "branch", "feature")
+	wtDir := filepath.Join(t.TempDir(), "wt")
+	runGit(t, main, "worktree", "add", wtDir, "feature")
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: wtDir}
+	got := fetchHeadPath(info)
+
+	// In a worktree, .git is a file, so the naive joined path is invalid.
+	naive := filepath.Join(wtDir, ".git", "FETCH_HEAD")
+	if got == naive {
+		t.Errorf("fetchHeadPath() in worktree = naive path %q; should be resolved via git", got)
+	}
+	if filepath.Base(got) != "FETCH_HEAD" {
+		t.Errorf("fetchHeadPath() = %q, base should be FETCH_HEAD", got)
+	}
+	// The containing directory should exist (a real git infrastructure dir).
+	if _, err := os.Stat(filepath.Dir(got)); err != nil {
+		t.Errorf("fetchHeadPath() = %q, directory does not exist: %v", got, err)
+	}
+}
+
 func TestGatherFieldSelection(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found")
