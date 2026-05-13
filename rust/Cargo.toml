@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/runner",
+    "crates/vcsdetect",
+    "crates/vcs",
+    "crates/vcs-git",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.74"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+runner = { path = "crates/runner" }
+vcsdetect = { path = "crates/vcsdetect" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
