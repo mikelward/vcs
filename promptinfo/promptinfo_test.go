@@ -710,6 +710,27 @@ func TestGatherHGUnknownStatusWithBehind(t *testing.T) {
 	}
 }
 
+func TestBehindBySync(t *testing.T) {
+	now := time.Unix(1700100000, 0)
+	tests := []struct {
+		name     string
+		syncTime time.Time
+		found    bool
+		want     bool
+	}{
+		{"not found does not nag", time.Time{}, false, false},
+		{"fresh sync does not nag", now.Add(-1 * time.Hour), true, false},
+		{"stale sync nags", now.Add(-25 * time.Hour), true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := behindBySync(tt.syncTime, tt.found, now, fetchStaleThreshold); got != tt.want {
+				t.Errorf("behindBySync = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // helpers
 
 func sortStrings(s []string) {

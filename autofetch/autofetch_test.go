@@ -342,6 +342,93 @@ func TestRunJJColocatedStale(t *testing.T) {
 	}
 }
 
+// makePiperRepo creates a jj workspace whose store type marks a non-git
+// backend, so vcsdetect reports Backend="piper".
+func makePiperRepo(t *testing.T) string {
+	t.Helper()
+	root := makeRepo(t, ".jj/repo/store")
+	if err := os.WriteFile(filepath.Join(root, ".jj", "repo", "store", "type"), []byte("piper"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// jj piper backend: no git FETCH_HEAD marker. Staleness is gated on the
+// op-log sync time, and the refresh command is `jj piper pull`.
+func TestRunJJPiperStaleSpawnsSync(t *testing.T) {
+	root := makePiperRepo(t)
+	now := time.Now()
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:        root,
+		Spawn:      spawn,
+		Now:        func() time.Time { return now },
+		JJSyncTime: func(string) (time.Time, bool) { return now.Add(-2 * time.Hour), true },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched", action)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("got %d spawn calls, want 1", len(*calls))
+	}
+	got := (*calls)[0]
+	if got.name != "jj" {
+		t.Errorf("spawn name = %q, want %q", got.name, "jj")
+	}
+	wantArgs := []string{"--repository", root, "piper", "pull"}
+	if !equalArgs(got.args, wantArgs) {
+		t.Errorf("spawn args = %v, want %v", got.args, wantArgs)
+	}
+}
+
+func TestRunJJPiperFreshSkipsSync(t *testing.T) {
+	root := makePiperRepo(t)
+	now := time.Now()
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:        root,
+		Spawn:      spawn,
+		Now:        func() time.Time { return now },
+		JJSyncTime: func(string) (time.Time, bool) { return now.Add(-1 * time.Minute), true },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFresh {
+		t.Errorf("action = %v, want ActionFresh", action)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("got %d spawn calls, want 0", len(*calls))
+	}
+}
+
+// No recorded sync (e.g. a freshly created workspace) counts as stale so the
+// first sync still runs.
+func TestRunJJPiperNoSyncSpawns(t *testing.T) {
+	root := makePiperRepo(t)
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:        root,
+		Spawn:      spawn,
+		JJSyncTime: func(string) (time.Time, bool) { return time.Time{}, false },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFetched {
+		t.Errorf("action = %v, want ActionFetched", action)
+	}
+	if len(*calls) != 1 {
+		t.Errorf("got %d spawn calls, want 1", len(*calls))
+	}
+}
+
 // Spawn errors propagate as Run errors but the Action is still
 // reported as ActionFetched (the decision was to fetch; only the
 // kernel-level Start failed). This keeps the error path observable

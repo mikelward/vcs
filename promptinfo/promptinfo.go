@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mikelward/vcs/internal/jjsync"
 	"github.com/mikelward/vcs/runner"
 	"github.com/mikelward/vcs/vcsdetect"
 )
@@ -20,10 +21,13 @@ import (
 // DefaultFormat is the default format string for prompt-info output.
 const DefaultFormat = `{project} {subdir} {branch} {status} {behind}`
 
-// fetchStaleThreshold is how old FETCH_HEAD must be to be considered stale,
-// used as a fallback for repos with no configured upstream (where the
-// ahead/behind comparison can't be made).
-const fetchStaleThreshold = 24 * time.Hour
+// fetchStaleThreshold is how old the last fetch/sync must be to be considered
+// stale. For git-backed repos with no configured upstream it's a fallback
+// (the ahead/behind comparison can't be made); for fast-moving non-git
+// backends it's the primary "you haven't synced in a while" signal. Kept
+// comfortably above the auto-fetch interval (1h) so the normal gap between
+// background fetches doesn't trip the nag.
+const fetchStaleThreshold = 4 * time.Hour
 
 // Result holds the gathered prompt information.
 type Result struct {
@@ -31,7 +35,7 @@ type Result struct {
 	Subdir  string // cwd relative to rootDir
 	Branch  string // current branch (empty for jj)
 	Status  string // "*" if there are uncommitted changes, else ""
-	Behind  bool   // true if upstream has commits we don't, or (no upstream) FETCH_HEAD is stale
+	Behind  bool   // git-backed: upstream has commits we don't, or (no upstream) FETCH_HEAD is stale. Fast-moving backends (e.g. piper): last sync is older than fetchStaleThreshold.
 }
 
 // ParseFields extracts {field} names from a format string.
@@ -211,7 +215,15 @@ func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBeh
 		}
 		return
 	case "jj":
+		// A git-backed jj repo has a stable upstream (origin/main) we can
+		// compare against. A non-git backend (e.g. piper) does not:
+		// its trunk advances constantly, so a ref comparison is always
+		// "behind" and the nag is useless. Treat empty/"git" as git-backed
+		// (jj git init writes "git"); anything else is a fast-moving backend.
+		gitBacked := info.Backend == "" || info.Backend == "git"
 		var desc, diff, bookmarkStates string
+		var syncTime time.Time
+		var syncFound bool
 		var jjwg sync.WaitGroup
 		if needStatus {
 			// Legacy behavior: a non-empty description on @ means "clean"
@@ -229,26 +241,43 @@ func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBeh
 			}()
 		}
 		if needBehind {
-			jjwg.Add(1)
-			go func() {
-				defer jjwg.Done()
-				tmpl := `if(self.contained_in("ancestors(@)"), "upstream\n", "behind\n")`
-				bookmarkStates, _ = capture("jj", "-R", info.RootDir, "log", "--no-graph", "-r", "remote_bookmarks()", "-T", tmpl)
-			}()
+			if gitBacked {
+				jjwg.Add(1)
+				go func() {
+					defer jjwg.Done()
+					tmpl := `if(self.contained_in("ancestors(@)"), "upstream\n", "behind\n")`
+					bookmarkStates, _ = capture("jj", "-R", info.RootDir, "log", "--no-graph", "-r", "remote_bookmarks()", "-T", tmpl)
+				}()
+			} else {
+				jjwg.Add(1)
+				go func() {
+					defer jjwg.Done()
+					syncTime, syncFound = jjsync.LastSync(info.RootDir)
+				}()
+			}
 		}
 		jjwg.Wait()
 		if needStatus && desc == "" {
 			out = diff
 		}
 		if needBehind {
-			for _, line := range strings.Split(bookmarkStates, "\n") {
-				switch strings.TrimSpace(line) {
-				case "behind":
-					behind = true
-					hasUpstream = true
-				case "upstream":
-					hasUpstream = true
+			if gitBacked {
+				for _, line := range strings.Split(bookmarkStates, "\n") {
+					switch strings.TrimSpace(line) {
+					case "behind":
+						behind = true
+						hasUpstream = true
+					case "upstream":
+						hasUpstream = true
+					}
 				}
+			} else {
+				// Fast-moving backend: nag only when the last pull/sync is
+				// older than the staleness threshold, never on every prompt.
+				// hasUpstream is true so the caller does not also apply the
+				// git FETCH_HEAD mtime fallback (which doesn't exist here).
+				hasUpstream = true
+				behind = behindBySync(syncTime, syncFound, time.Now(), fetchStaleThreshold)
 			}
 		}
 	case "hg":
@@ -263,6 +292,16 @@ func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBeh
 		status = "*"
 	}
 	return
+}
+
+// behindBySync reports whether a fast-moving backend should nag to pull:
+// true only when a prior sync was found and it is older than threshold.
+// When no sync is known, return false rather than nagging on every prompt.
+func behindBySync(syncTime time.Time, found bool, now time.Time, threshold time.Duration) bool {
+	if !found {
+		return false
+	}
+	return now.Sub(syncTime) > threshold
 }
 
 func parseHgSummary(out string, needStatus bool) (status string, behind bool, hasUpstream bool) {
