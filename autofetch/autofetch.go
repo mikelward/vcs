@@ -6,9 +6,11 @@
 // refs if they're stale") wants three things from one binary call:
 //
 //  1. VCS detection (skip silently if not in a tracked repo)
-//  2. A per-VCS fetch-marker file whose mtime tracks the last fetch
-//     (and whose location varies — colocated jj writes to
-//     .git/FETCH_HEAD, not .jj/repo/store/git/FETCH_HEAD)
+//  2. A per-VCS staleness gate: usually a fetch-marker file whose mtime
+//     tracks the last fetch (its location varies — colocated jj writes to
+//     .git/FETCH_HEAD, not .jj/repo/store/git/FETCH_HEAD), but a non-git jj
+//     backend has no such file, so the gate reads the last sync from the
+//     operation log instead
 //  3. The right fetch command per VCS, spawned detached so the prompt
 //     returns immediately
 //
@@ -29,6 +31,7 @@ import (
 	"time"
 
 	"github.com/mikelward/vcs/internal/fetchlock"
+	"github.com/mikelward/vcs/internal/jjsync"
 	"github.com/mikelward/vcs/runner"
 	"github.com/mikelward/vcs/vcsdetect"
 )
@@ -93,6 +96,12 @@ type Options struct {
 	// inherited file descriptors (e.g. a fetch lock) remain open until
 	// the child exits.
 	Spawn func(name string, args []string, extraFiles []*os.File) error
+
+	// JJSyncTime returns when a jj workspace last synced, used to gate
+	// fetches on backends with no fetch-marker file (e.g. piper).
+	// Defaults to jjsync.LastSync. Injected by tests to drive the gate
+	// without invoking jj.
+	JJSyncTime func(rootDir string) (time.Time, bool)
 }
 
 // Run executes one auto-fetch decision: detect the VCS in cwd, check
@@ -115,7 +124,9 @@ func Run(opts *Options) (Action, error) {
 	if opts.Spawn == nil {
 		opts.Spawn = detachedSpawn
 	}
-
+	if opts.JJSyncTime == nil {
+		opts.JJSyncTime = jjsync.LastSync
+	}
 
 	dir := opts.Cwd
 	if dir == "" {
@@ -134,12 +145,12 @@ func Run(opts *Options) (Action, error) {
 		info.VCS = opts.ForceVCS
 	}
 
-	marker, fetchName, fetchArgs, ok := dispatch(info, opts.HgPath)
+	p, ok := dispatch(info, opts.HgPath)
 	if !ok {
 		return ActionUnsupported, nil
 	}
 
-	if !markerStale(marker, opts.MaxAge, opts.Now()) {
+	if !p.stale(opts) {
 		return ActionFresh, nil
 	}
 
@@ -150,7 +161,7 @@ func Run(opts *Options) (Action, error) {
 	// skip — pull is fetching for us.
 	var extraFiles []*os.File
 	if info.VCS == "git" {
-		lockFile, lockErr := fetchlock.TryLock(filepath.Dir(marker))
+		lockFile, lockErr := fetchlock.TryLock(filepath.Dir(p.marker))
 		if errors.Is(lockErr, fetchlock.ErrLocked) {
 			return ActionFresh, nil
 		}
@@ -160,11 +171,11 @@ func Run(opts *Options) (Action, error) {
 		// Other errors (permissions etc.): proceed without lock.
 	}
 
-	if err := opts.Spawn(fetchName, fetchArgs, extraFiles); err != nil {
+	if err := opts.Spawn(p.name, p.args, extraFiles); err != nil {
 		for _, f := range extraFiles {
 			f.Close()
 		}
-		return ActionFetched, fmt.Errorf("spawn %s: %w", fetchName, err)
+		return ActionFetched, fmt.Errorf("spawn %s: %w", p.name, err)
 	}
 	for _, f := range extraFiles {
 		f.Close() // parent releases its copy; child holds the lock until it exits
@@ -172,10 +183,33 @@ func Run(opts *Options) (Action, error) {
 	return ActionFetched, nil
 }
 
-// dispatch returns (markerPath, fetchCmd, fetchArgs, supported) for
-// the given VCS. The fetch command is the foreground form; the
-// caller spawns it detached.
-func dispatch(info *vcsdetect.Info, hgPath string) (marker, name string, args []string, ok bool) {
+// fetchPlan describes how to refresh a repo: the command to spawn and how to
+// decide whether it's due. Staleness is gated either on a marker file's mtime
+// (marker != "") or, for backends with no fetch-marker file, on the jj
+// operation log (opLog).
+type fetchPlan struct {
+	marker  string   // file whose mtime tracks the last fetch; unused if opLog
+	opLog   bool     // gate on jj op-log sync time instead of a marker file
+	rootDir string   // repo root, passed to JJSyncTime when opLog
+	name    string   // fetch command
+	args    []string // fetch command args
+}
+
+// stale reports whether the fetch is due under opts (Now, MaxAge, JJSyncTime).
+func (p fetchPlan) stale(opts *Options) bool {
+	if p.opLog {
+		// No marker file exists for this backend; ask the op log when we
+		// last synced. A missing/unknown sync time counts as stale so the
+		// first sync still happens.
+		t, found := opts.JJSyncTime(p.rootDir)
+		return !found || opts.Now().Sub(t) > opts.MaxAge
+	}
+	return markerStale(p.marker, opts.MaxAge, opts.Now())
+}
+
+// dispatch returns a fetchPlan for the given VCS. The fetch command is the
+// foreground form; the caller spawns it detached.
+func dispatch(info *vcsdetect.Info, hgPath string) (fetchPlan, bool) {
 	switch info.VCS {
 	case "git":
 		// `<root>/.git` is a directory in the common case but a file
@@ -185,37 +219,61 @@ func dispatch(info *vcsdetect.Info, hgPath string) (marker, name string, args []
 		// resolve all of that — `--git-path FETCH_HEAD` follows the
 		// same logic git itself uses for fetch, so the mtime gate
 		// reads the same file `git fetch` writes.
-		marker = gitMarkerPath(info.RootDir)
+		//
 		// `git -C ROOT fetch --quiet` resolves the gitdir for us
 		// (handles worktrees and submodules without us having to
 		// invoke `git rev-parse --git-dir` separately).
-		return marker, "git", []string{"-C", info.RootDir, "fetch", "--quiet"}, true
+		return fetchPlan{
+			marker: gitMarkerPath(info.RootDir),
+			name:   "git",
+			args:   []string{"-C", info.RootDir, "fetch", "--quiet"},
+		}, true
 	case "hg":
 		// 00changelog.i is rewritten on every `hg pull` regardless of
 		// whether new changesets arrived, so its mtime tracks the
 		// last pull attempt.
-		marker = filepath.Join(info.RootDir, ".hg", "store", "00changelog.i")
 		hg := hgPath
 		if hg == "" {
 			hg = "hg"
 		}
-		return marker, hg, []string{"-R", info.RootDir, "pull", "--quiet"}, true
+		return fetchPlan{
+			marker: filepath.Join(info.RootDir, ".hg", "store", "00changelog.i"),
+			name:   hg,
+			args:   []string{"-R", info.RootDir, "pull", "--quiet"},
+		}, true
 	case "jj":
+		// A non-git backend (e.g. piper) has no git FETCH_HEAD file and
+		// `jj git fetch` doesn't apply; refresh with `jj piper pull` and
+		// gate on the op-log sync time instead of a marker file. rootDir
+		// is passed to JJSyncTime by stale().
+		if info.Backend != "" && info.Backend != "git" {
+			return fetchPlan{
+				opLog:   true,
+				rootDir: info.RootDir,
+				name:    "jj",
+				args:    []string{"--repository", info.RootDir, "piper", "pull"},
+			}, true
+		}
 		// Colocated workspaces (the default `jj git init` layout)
 		// have a top-level `.git` directory and `jj git fetch` writes
 		// to .git/FETCH_HEAD. Non-colocated workspaces keep the git
 		// store under .jj/repo/store/git/. Prefer the colocated path
 		// when present so the mtime gate doesn't always treat
 		// colocated repos as stale.
+		var marker string
 		colocated := filepath.Join(info.RootDir, ".git")
 		if st, err := os.Stat(colocated); err == nil && st.IsDir() {
 			marker = filepath.Join(colocated, "FETCH_HEAD")
 		} else {
 			marker = filepath.Join(info.RootDir, ".jj", "repo", "store", "git", "FETCH_HEAD")
 		}
-		return marker, "jj", []string{"--repository", info.RootDir, "git", "fetch", "--quiet"}, true
+		return fetchPlan{
+			marker: marker,
+			name:   "jj",
+			args:   []string{"--repository", info.RootDir, "git", "fetch", "--quiet"},
+		}, true
 	}
-	return "", "", nil, false
+	return fetchPlan{}, false
 }
 
 // markerStale returns true when the marker is missing or its mtime is

@@ -190,6 +190,16 @@ Policy (what counts as a "production" host, what the short hostname looks
 like) stays in the shell: `prompt-line` takes `--hostname` and `--production`
 as inputs so the binary never has to know.
 
+The `behind` field (rendered as `pull`) is backend-aware. For git-backed
+repos (git, hg, and jj on a git backend) it means the fetched upstream is
+ahead of the checkout, falling back to a stale-FETCH_HEAD signal when no
+upstream is configured. For fast-moving non-git backends (e.g. a jj
+piper workspace, where trunk advances constantly and a ref
+comparison would always read "behind"), it instead means the last
+pull/sync operation — read from `jj op log` — is older than the staleness
+threshold, so the prompt nags about a drifting checkout rather than on
+every prompt.
+
 ## Hosting Detection
 
 Hosting platform is detected by parsing the git remote `origin` URL from

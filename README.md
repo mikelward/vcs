@@ -65,7 +65,7 @@ $ vcs -n commit -m "fix bug"
 | `hosting` | Print the hosting platform (e.g. `github`). |
 | `prompt-info` | Print all prompt info (project, subdir, branch, status, behind) in one invocation. See `--format`, `--color`. |
 | `prompt-line` | Print the full preprompt first line (hostname, shpool tag, directory/VCS info, auth warning) in one invocation. See `--hostname`, `--production`, `--shpool`, `--color`, `--no-ssh`. |
-| `auto-fetch` | Spawn a detached background fetch (`git fetch` / `hg pull` / `jj git fetch`) when the repo's fetch marker is older than `--max-age` (default `1h`). Silent on no-op paths; intended to be called from shell prompt hooks after a `cd`. Use `--verbose` to print the action taken (`not-in-repo` / `fresh` / `fetched` / `unsupported`). |
+| `auto-fetch` | Spawn a detached background fetch (`git fetch` / `hg pull` / `jj git fetch`, or `jj piper pull` on a non-git backend) when the repo is stale: older than `--max-age` (default `1h`) by the fetch marker's mtime, or — for non-git jj backends with no marker file — by the last sync recorded in `jj op log`. Silent on no-op paths; intended to be called from shell prompt hooks after a `cd`. Use `--verbose` to print the action taken (`not-in-repo` / `fresh` / `fetched` / `unsupported`). |
 | `clearcache` | Remove `.vcs_cache` files under the current directory. |
 | `version` | Print the version, git commit, and build date on separate lines. |
 
