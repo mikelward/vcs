@@ -151,7 +151,7 @@ func dispatch(subcmd string, args []string) error {
 	case "rebase":
 		return git("rebase", args...)
 	case "recommit":
-		return git("amend", args...)
+		return git("commit", append([]string{"--amend"}, args...)...)
 	case "remove", "rm":
 		return git("rm", args...)
 	case "restore":
@@ -163,7 +163,7 @@ func dispatch(subcmd string, args []string) error {
 	case "reword":
 		return git("commit", "--amend", "--only", "--allow-empty")
 	case "rootdir":
-		return git("rootdir")
+		return git("rev-parse", "--show-toplevel")
 	case "show":
 		return git("show", args...)
 	case "split":
