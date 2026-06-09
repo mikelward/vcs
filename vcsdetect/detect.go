@@ -136,6 +136,30 @@ func Detect(dir string) (*Info, error) {
 	return info, nil
 }
 
+// JJGitDir returns the backing git directory for the jj repo rooted at
+// rootDir. jj records the location in .jj/repo/store/git_target: colocated
+// workspaces (the `jj git init` default) point it at the top-level .git,
+// while non-colocated repos keep the store under .jj/repo/store/git.
+// When git_target is missing or unreadable, fall back to the top-level .git
+// directory if one exists (colocated), else the non-colocated store path.
+func JJGitDir(rootDir string) string {
+	store := filepath.Join(rootDir, ".jj", "repo", "store")
+	if data, err := os.ReadFile(filepath.Join(store, "git_target")); err == nil {
+		target := strings.TrimSpace(string(data))
+		if target != "" {
+			if filepath.IsAbs(target) {
+				return filepath.Clean(target)
+			}
+			return filepath.Join(store, target)
+		}
+	}
+	dotGit := filepath.Join(rootDir, ".git")
+	if fi, err := os.Stat(dotGit); err == nil && fi.IsDir() {
+		return dotGit
+	}
+	return filepath.Join(store, "git")
+}
+
 // gitConfigPath returns the path to the git config file for rootDir, handling
 // worktrees where .git is a pointer file rather than a directory.
 func gitConfigPath(rootDir string) string {
@@ -169,7 +193,7 @@ func detectHosting(vcsName, rootDir string) string {
 	var configPath string
 	switch vcsName {
 	case "jj":
-		configPath = filepath.Join(rootDir, ".jj", "repo", "store", "git", "config")
+		configPath = filepath.Join(JJGitDir(rootDir), "config")
 	default:
 		configPath = gitConfigPath(rootDir)
 	}

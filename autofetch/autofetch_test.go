@@ -342,6 +342,36 @@ func TestRunJJColocatedStale(t *testing.T) {
 	}
 }
 
+// jj records the backing git dir in .jj/repo/store/git_target; when present
+// it is authoritative over the .git-dir-exists heuristic. Point it at a
+// custom location with a fresh FETCH_HEAD while the top-level .git holds a
+// stale one — Run must skip, proving git_target was consulted.
+func TestRunJJGitTargetWins(t *testing.T) {
+	root := makeRepo(t, ".jj/repo/store", ".git", "custom-git")
+	if err := os.WriteFile(filepath.Join(root, ".jj", "repo", "store", "git_target"), []byte("../../../custom-git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	touchOld(t, filepath.Join(root, "custom-git", "FETCH_HEAD"), now.Add(-1*time.Minute))
+	touchOld(t, filepath.Join(root, ".git", "FETCH_HEAD"), now.Add(-48*time.Hour))
+	calls, spawn := recordingSpawn()
+
+	action, err := Run(&Options{
+		Cwd:   root,
+		Spawn: spawn,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if action != ActionFresh {
+		t.Errorf("action = %v, want ActionFresh (git_target path should win)", action)
+	}
+	if len(*calls) != 0 {
+		t.Errorf("got %d spawn calls, want 0", len(*calls))
+	}
+}
+
 // makePiperRepo creates a jj workspace whose store type marks a non-git
 // backend, so vcsdetect reports Backend="piper".
 func makePiperRepo(t *testing.T) string {

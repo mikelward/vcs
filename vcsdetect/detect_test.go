@@ -183,6 +183,67 @@ func TestClassifyURL(t *testing.T) {
 	}
 }
 
+func TestJJGitDir(t *testing.T) {
+	t.Run("git_target colocated", func(t *testing.T) {
+		dir := t.TempDir()
+		store := filepath.Join(dir, ".jj", "repo", "store")
+		os.MkdirAll(store, 0755)
+		os.WriteFile(filepath.Join(store, "git_target"), []byte("../../../.git\n"), 0666)
+
+		if got, want := JJGitDir(dir), filepath.Join(dir, ".git"); got != want {
+			t.Errorf("JJGitDir() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("git_target non-colocated", func(t *testing.T) {
+		dir := t.TempDir()
+		store := filepath.Join(dir, ".jj", "repo", "store")
+		os.MkdirAll(store, 0755)
+		os.WriteFile(filepath.Join(store, "git_target"), []byte("git\n"), 0666)
+
+		if got, want := JJGitDir(dir), filepath.Join(store, "git"); got != want {
+			t.Errorf("JJGitDir() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("no git_target, top-level .git", func(t *testing.T) {
+		dir := t.TempDir()
+		os.MkdirAll(filepath.Join(dir, ".jj", "repo", "store"), 0755)
+		os.Mkdir(filepath.Join(dir, ".git"), 0755)
+
+		if got, want := JJGitDir(dir), filepath.Join(dir, ".git"); got != want {
+			t.Errorf("JJGitDir() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("no git_target, no .git", func(t *testing.T) {
+		dir := t.TempDir()
+		os.MkdirAll(filepath.Join(dir, ".jj", "repo", "store"), 0755)
+
+		if got, want := JJGitDir(dir), filepath.Join(dir, ".jj", "repo", "store", "git"); got != want {
+			t.Errorf("JJGitDir() = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestDetectHostingJJColocated(t *testing.T) {
+	// Colocated jj (the `jj git init` default): the git store is the
+	// top-level .git, recorded in .jj/repo/store/git_target. Hosting must
+	// be read from .git/config, not the non-colocated store path.
+	dir := t.TempDir()
+	store := filepath.Join(dir, ".jj", "repo", "store")
+	os.MkdirAll(store, 0755)
+	os.WriteFile(filepath.Join(store, "git_target"), []byte("../../../.git\n"), 0666)
+	gitDir := filepath.Join(dir, ".git")
+	os.Mkdir(gitDir, 0755)
+	config := "[remote \"origin\"]\n\turl = git@github.com:user/repo.git\n"
+	os.WriteFile(filepath.Join(gitDir, "config"), []byte(config), 0666)
+
+	if got := detectHosting("jj", dir); got != "github" {
+		t.Errorf("detectHosting() colocated jj = %q, want %q", got, "github")
+	}
+}
+
 func TestGitConfigPathWorktree(t *testing.T) {
 	// Simulate a git worktree: .git is a file, commondir points to main git dir.
 	main := t.TempDir()
