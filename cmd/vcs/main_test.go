@@ -117,6 +117,48 @@ func TestDetectDirMissing(t *testing.T) {
 	}
 }
 
+// TestPromptInfoStripsHgPathPrefix covers the same regression as
+// TestAutoFetchCmdStripsHgPathPrefix (below) for the prompt-info
+// subcommand: main()'s flag parser stores --hg-path as the literal flag
+// string (`--hg-path=PATH`) for passthrough to vcs-hg, and promptInfo
+// must strip the prefix before handing it to promptinfo.Options.HgPath,
+// which is used directly as the hg binary path. A fake hg script reports
+// a dirty file; if the prefix leaks through, the exec fails and the
+// status field comes back empty.
+func TestPromptInfoStripsHgPathPrefix(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".hg", "store"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(t.TempDir(), "fakehg")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho 'M dirty.txt'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(cwd) })
+
+	// Capture stdout (promptInfo prints the formatted result there).
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prevStdout := os.Stdout
+	os.Stdout = w
+
+	promptInfo("", "--hg-path="+fake, []string{"--format={status}", "--color=never"})
+
+	w.Close()
+	os.Stdout = prevStdout
+	out, _ := io.ReadAll(r)
+
+	if got := strings.TrimSpace(string(out)); got != "*" {
+		t.Errorf("prompt-info status = %q, want %q (hg path prefix not stripped?)", got, "*")
+	}
+}
+
 // TestAutoFetchCmdStripsHgPathPrefix covers the regression where
 // main()'s flag parser stores --hg-path as the literal flag string
 // (`--hg-path=PATH`) for passthrough to vcs-hg, but autoFetchCmd

@@ -222,6 +222,10 @@ func detectDir(args []string) (string, error) {
 }
 
 func promptInfo(forceVCS string, hgPath string, args []string) {
+	// Top-level stores hgPath with the --hg-path= prefix for passthrough
+	// to vcs-hg; strip it here since promptinfo.Options.HgPath wants the
+	// bare path.
+	hgPath = strings.TrimPrefix(hgPath, "--hg-path=")
 	format := promptinfo.DefaultFormat
 	colorMode := "auto"
 
