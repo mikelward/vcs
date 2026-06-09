@@ -138,6 +138,34 @@ func TestColorWrap(t *testing.T) {
 	}
 }
 
+func TestFetchHeadPathJJ(t *testing.T) {
+	t.Run("colocated", func(t *testing.T) {
+		// Colocated jj (the `jj git init` default) writes FETCH_HEAD to
+		// the top-level .git, recorded in .jj/repo/store/git_target.
+		root := t.TempDir()
+		store := filepath.Join(root, ".jj", "repo", "store")
+		os.MkdirAll(store, 0755)
+		os.WriteFile(filepath.Join(store, "git_target"), []byte("../../../.git\n"), 0666)
+
+		info := &vcsdetect.Info{VCS: "jj", RootDir: root}
+		want := filepath.Join(root, ".git", "FETCH_HEAD")
+		if got := fetchHeadPath(info); got != want {
+			t.Errorf("fetchHeadPath() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("non-colocated", func(t *testing.T) {
+		root := t.TempDir()
+		os.MkdirAll(filepath.Join(root, ".jj", "repo", "store"), 0755)
+
+		info := &vcsdetect.Info{VCS: "jj", RootDir: root}
+		want := filepath.Join(root, ".jj", "repo", "store", "git", "FETCH_HEAD")
+		if got := fetchHeadPath(info); got != want {
+			t.Errorf("fetchHeadPath() = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestFetchAge(t *testing.T) {
 	t.Run("nonexistent", func(t *testing.T) {
 		if getFetchStale("/nonexistent/path/FETCH_HEAD") {

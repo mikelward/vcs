@@ -332,7 +332,9 @@ func fetchHeadPath(info *vcsdetect.Info) string {
 	case "git":
 		return gitResolveFile(info.RootDir, "FETCH_HEAD")
 	case "jj":
-		return filepath.Join(info.RootDir, ".jj", "repo", "store", "git", "FETCH_HEAD")
+		// JJGitDir handles colocated workspaces, where `jj git fetch`
+		// writes .git/FETCH_HEAD rather than .jj/repo/store/git/FETCH_HEAD.
+		return filepath.Join(vcsdetect.JJGitDir(info.RootDir), "FETCH_HEAD")
 	case "hg":
 		return filepath.Join(info.RootDir, ".hg", "store", "00changelog.i")
 	}

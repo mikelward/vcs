@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/mikelward/vcs/runner"
@@ -280,7 +281,9 @@ func jjFetchtime() error {
 	if err != nil {
 		return err
 	}
-	fetchHead := root + "/.jj/repo/store/git/FETCH_HEAD"
+	// JJGitDir handles colocated workspaces, where `jj git fetch` writes
+	// .git/FETCH_HEAD rather than .jj/repo/store/git/FETCH_HEAD.
+	fetchHead := filepath.Join(vcsdetect.JJGitDir(root), "FETCH_HEAD")
 	fi, err := os.Stat(fetchHead)
 	if err != nil {
 		return err

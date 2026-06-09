@@ -257,18 +257,11 @@ func dispatch(info *vcsdetect.Info, hgPath string) (fetchPlan, bool) {
 		// Colocated workspaces (the default `jj git init` layout)
 		// have a top-level `.git` directory and `jj git fetch` writes
 		// to .git/FETCH_HEAD. Non-colocated workspaces keep the git
-		// store under .jj/repo/store/git/. Prefer the colocated path
-		// when present so the mtime gate doesn't always treat
-		// colocated repos as stale.
-		var marker string
-		colocated := filepath.Join(info.RootDir, ".git")
-		if st, err := os.Stat(colocated); err == nil && st.IsDir() {
-			marker = filepath.Join(colocated, "FETCH_HEAD")
-		} else {
-			marker = filepath.Join(info.RootDir, ".jj", "repo", "store", "git", "FETCH_HEAD")
-		}
+		// store under .jj/repo/store/git/. JJGitDir resolves the
+		// actual store location (via .jj/repo/store/git_target) so the
+		// mtime gate doesn't always treat colocated repos as stale.
 		return fetchPlan{
-			marker: marker,
+			marker: filepath.Join(vcsdetect.JJGitDir(info.RootDir), "FETCH_HEAD"),
 			name:   "jj",
 			args:   []string{"--repository", info.RootDir, "git", "fetch", "--quiet"},
 		}, true
