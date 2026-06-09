@@ -505,6 +505,24 @@ func TestAmend(t *testing.T) {
 	}
 }
 
+func TestRecommit(t *testing.T) {
+	_, local := newGitRepo(t)
+	writeFile(t, local, "r.txt", "x")
+	gitRun(t, local, "add", "r.txt")
+	gitRun(t, local, "commit", "-m", "pre-recommit")
+
+	// recommit amends the previous commit (like hg commit --amend).
+	if _, err := runDispatch(t, local, "recommit", "-m", "after recommit"); err != nil {
+		t.Fatalf("recommit: %v", err)
+	}
+	if got := gitOut(t, local, "log", "-1", "--format=%s"); got != "after recommit" {
+		t.Errorf("recommit subject = %q, want %q", got, "after recommit")
+	}
+	if got := gitOut(t, local, "rev-list", "--count", "HEAD"); got != "2" {
+		t.Errorf("recommit should amend, not add a commit; count = %s", got)
+	}
+}
+
 func TestRewordAndDescribe(t *testing.T) {
 	_, local := newGitRepo(t)
 	editor := editorStub(t)
@@ -933,6 +951,22 @@ func TestIgnore(t *testing.T) {
 	}
 	if !strings.Contains(string(got), "build/") {
 		t.Errorf(".gitignore missing build/: %q", got)
+	}
+}
+
+func TestRootdir(t *testing.T) {
+	_, local := newGitRepo(t)
+	// rootdir should print the repo root, even from a subdirectory.
+	sub := filepath.Join(local, "sub")
+	os.MkdirAll(sub, 0755)
+	out, err := runDispatch(t, sub, "rootdir")
+	if err != nil {
+		t.Fatalf("rootdir: %v", err)
+	}
+	want, _ := filepath.EvalSymlinks(local)
+	got, _ := filepath.EvalSymlinks(strings.TrimSpace(out))
+	if got != want {
+		t.Errorf("rootdir = %q, want %q", got, want)
 	}
 }
 
