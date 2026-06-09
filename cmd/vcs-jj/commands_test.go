@@ -75,7 +75,9 @@ func TestAtTip(t *testing.T) {
 
 	writeFile(t, repo, "a.txt", "x\n")
 	jjRun(t, repo, "commit", "-m", "A")
-	parentID := jjOut(t, repo, "log", "--no-graph", "-r", "@-", "-T", "change_id.shortest()")
+	// Use the full change ID: a shortest() prefix captured here can become
+	// ambiguous once the next commit is created, breaking the later jj edit.
+	parentID := jjOut(t, repo, "log", "--no-graph", "-r", "@-", "-T", "change_id")
 	writeFile(t, repo, "b.txt", "x\n")
 	jjRun(t, repo, "commit", "-m", "B")
 	jjRun(t, repo, "edit", parentID)
