@@ -70,6 +70,7 @@ doneFlags:
 	args = args[1:]
 
 	err := dispatch(subcmd, args)
+	runner.PrintError("vcs-hg", err)
 	os.Exit(runner.ExitCode(err))
 }
 
@@ -212,8 +213,7 @@ func dispatch(subcmd string, args []string) error {
 	case "revert":
 		return hgRevert(args)
 	case "review":
-		fmt.Fprintln(os.Stderr, "hg review not supported")
-		return fmt.Errorf("not supported")
+		return fmt.Errorf("hg review not supported")
 	case "reword":
 		return hgReword(args)
 	case "rootdir":

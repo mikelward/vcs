@@ -45,6 +45,7 @@ func main() {
 	}
 
 	err := dispatch(subcmd, subArgs)
+	runner.PrintError("vcs-git", err)
 	os.Exit(runner.ExitCode(err))
 }
 
@@ -104,8 +105,7 @@ func dispatch(subcmd string, args []string) error {
 		}
 		return git("rebase", "--onto", args[0]+"~", args[0])
 	case "evolve":
-		fmt.Fprintln(os.Stderr, "no automatic evolve in git; use: git rebase --onto <new> <old> <branch>")
-		return fmt.Errorf("not supported")
+		return fmt.Errorf("no automatic evolve in git; use: git rebase --onto <new> <old> <branch>")
 	case "fastforward":
 		return git("pull", "--ff-only")
 	case "fetchtime":
@@ -398,8 +398,7 @@ func gitHook(hookName string, args []string) error {
 	script := gitDir + "/hooks/" + hookName
 	fi, err := os.Stat(script)
 	if err != nil || fi.Mode()&0111 == 0 {
-		fmt.Fprintf(os.Stderr, "No %s hook\n", script)
-		return fmt.Errorf("no hook")
+		return fmt.Errorf("no %s hook", script)
 	}
 	return runner.Run(script, args...)
 }
@@ -462,11 +461,12 @@ func gitReview(args []string) error {
 	for i < len(args) {
 		switch args[i] {
 		case "-r", "-m", "--reviewer":
-			if i+1 < len(args) {
-				reviewers = append(reviewers, args[i+1])
-				i += 2
-				continue
+			if i+1 >= len(args) {
+				return fmt.Errorf("%s requires a reviewer argument", args[i])
 			}
+			reviewers = append(reviewers, args[i+1])
+			i += 2
+			continue
 		default:
 			if strings.HasPrefix(args[i], "--reviewer=") {
 				reviewers = append(reviewers, strings.TrimPrefix(args[i], "--reviewer="))

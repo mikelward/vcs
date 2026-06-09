@@ -972,13 +972,14 @@ func TestRootdir(t *testing.T) {
 
 func TestPrecommitMissingHook(t *testing.T) {
 	_, local := newGitRepo(t)
-	// No hook file; precommit should return error and print "No ... pre-commit hook".
-	out, err := runDispatch(t, local, "precommit")
+	// No hook file; precommit should return an error naming the hook
+	// (main prints dispatch errors to stderr before exiting).
+	_, err := runDispatch(t, local, "precommit")
 	if err == nil {
-		t.Errorf("precommit with no hook: want error")
+		t.Fatalf("precommit with no hook: want error")
 	}
-	if !strings.Contains(out, "pre-commit") {
-		t.Errorf("precommit output should mention hook: %q", out)
+	if !strings.Contains(err.Error(), "pre-commit") {
+		t.Errorf("precommit error should mention hook: %v", err)
 	}
 }
 
@@ -1066,6 +1067,17 @@ func TestReviewNoReviewerDraft(t *testing.T) {
 	}
 	if !strings.Contains(gh, "--draft") {
 		t.Errorf("review without reviewer should be --draft: %q", gh)
+	}
+}
+
+func TestReviewReviewerFlagMissingValue(t *testing.T) {
+	// A trailing reviewer flag with no value must error out (before
+	// pushing anything) rather than being silently dropped.
+	for _, flag := range []string{"-r", "-m", "--reviewer"} {
+		_, err := runDispatch(t, t.TempDir(), "review", flag)
+		if err == nil {
+			t.Errorf("review %s with no value: want error", flag)
+		}
 	}
 }
 
