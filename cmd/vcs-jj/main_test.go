@@ -31,3 +31,14 @@ func TestDispatchEvolveIsNoop(t *testing.T) {
 		t.Errorf("evolve should be a no-op for jj, got error: %v", err)
 	}
 }
+
+func TestReviewReviewerFlagMissingValue(t *testing.T) {
+	// A trailing reviewer flag with no value must error out (before
+	// pushing anything) rather than being silently dropped. The flag
+	// parse happens before any jj invocation, so no repo is needed.
+	for _, flag := range []string{"-r", "-m", "--reviewer"} {
+		if err := dispatch("review", []string{flag}); err == nil {
+			t.Errorf("review %s with no value: want error", flag)
+		}
+	}
+}

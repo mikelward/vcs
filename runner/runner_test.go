@@ -1,8 +1,10 @@
 package runner
 
 import (
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -91,4 +93,48 @@ func TestRunNotDryRun(t *testing.T) {
 	if err := Run("true"); err != nil {
 		t.Fatalf("Run(true): %v", err)
 	}
+}
+
+func TestPrintError(t *testing.T) {
+	t.Run("nil error prints nothing", func(t *testing.T) {
+		out := captureStderr(t, func() { PrintError("vcs-test", nil) })
+		if out != "" {
+			t.Errorf("PrintError(nil) wrote %q, want nothing", out)
+		}
+	})
+
+	t.Run("exit error with inherited stderr prints nothing", func(t *testing.T) {
+		err := exec.Command("false").Run()
+		if err == nil {
+			t.Fatal("expected `false` to fail")
+		}
+		out := captureStderr(t, func() { PrintError("vcs-test", err) })
+		if out != "" {
+			t.Errorf("PrintError(ExitError) wrote %q, want nothing", out)
+		}
+	})
+
+	t.Run("exit error with captured stderr prints it", func(t *testing.T) {
+		// Output() captures the child's stderr on ExitError.Stderr instead
+		// of inheriting it; PrintError must surface it or the diagnostic
+		// is lost entirely.
+		_, err := exec.Command("sh", "-c", "echo boom >&2; exit 3").Output()
+		if err == nil {
+			t.Fatal("expected command to fail")
+		}
+		out := captureStderr(t, func() { PrintError("vcs-test", err) })
+		if out != "boom\n" {
+			t.Errorf("PrintError(ExitError with Stderr) wrote %q, want %q", out, "boom\n")
+		}
+	})
+
+	t.Run("plain error printed with prefix", func(t *testing.T) {
+		out := captureStderr(t, func() {
+			PrintError("vcs-test", errors.New("unknown subcommand: bogus"))
+		})
+		want := "vcs-test: unknown subcommand: bogus\n"
+		if out != want {
+			t.Errorf("PrintError wrote %q, want %q", out, want)
+		}
+	})
 }

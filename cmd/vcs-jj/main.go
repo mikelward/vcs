@@ -43,6 +43,7 @@ func main() {
 	}
 
 	err := dispatch(subcmd, subArgs)
+	runner.PrintError("vcs-jj", err)
 	os.Exit(runner.ExitCode(err))
 }
 
@@ -146,8 +147,7 @@ func dispatch(subcmd string, args []string) error {
 	case "graph":
 		return jjGraph(args)
 	case "histedit":
-		fmt.Fprintln(os.Stderr, "no interactive histedit in jj; use: jj squash, jj split, jj edit")
-		return fmt.Errorf("not supported")
+		return fmt.Errorf("no interactive histedit in jj; use: jj squash, jj split, jj edit")
 	case "ignore":
 		return jjIgnore(args)
 	case "incoming", "unpulled":
@@ -310,8 +310,7 @@ func jjIgnore(args []string) error {
 
 func jjPresubmit(args []string) error {
 	if backend() == "git" {
-		fmt.Fprintln(os.Stderr, "no presubmit for git-backed repos; run tests locally")
-		return fmt.Errorf("not supported")
+		return fmt.Errorf("no presubmit for git-backed repos; run tests locally")
 	}
 	return jj(append([]string{"piper", "presubmit"}, args...)...)
 }
@@ -369,11 +368,12 @@ func jjReview(args []string) error {
 	for i < len(args) {
 		switch args[i] {
 		case "-r", "-m", "--reviewer":
-			if i+1 < len(args) {
-				reviewFlags = append(reviewFlags, "-r", args[i+1])
-				i += 2
-				continue
+			if i+1 >= len(args) {
+				return fmt.Errorf("%s requires a reviewer argument", args[i])
 			}
+			reviewFlags = append(reviewFlags, "-r", args[i+1])
+			i += 2
+			continue
 		default:
 			if strings.HasPrefix(args[i], "--reviewer=") {
 				reviewFlags = append(reviewFlags, "-r", strings.TrimPrefix(args[i], "--reviewer="))
