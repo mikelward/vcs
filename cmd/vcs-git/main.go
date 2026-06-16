@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/mikelward/vcs/internal/fetchlock"
@@ -164,6 +165,8 @@ func dispatch(subcmd string, args []string) error {
 		return git("commit", "--amend", "--only", "--allow-empty")
 	case "rootdir":
 		return git("rev-parse", "--show-toplevel")
+	case "session":
+		return gitSession()
 	case "show":
 		return git("show", args...)
 	case "split":
@@ -323,6 +326,70 @@ func gitBranch() error {
 		fmt.Println(out)
 	}
 	return nil
+}
+
+// gitSession prints a short identifier for the current checkout, used to name
+// multiplexer session groups. The identifier is the independent working
+// directory, not the branch: a terminal multiplexer shares one working tree
+// among every session rooted in the same directory, so a branch only names a
+// distinct context when it has its own directory -- a linked worktree.
+//
+// So a linked worktree prints its checked-out branch (git permits a branch in
+// only one worktree at a time, so the branch uniquely names it), while the
+// primary working tree prints the repository directory's basename regardless
+// of which branch is checked out -- branches there are switched in place and
+// all sessions share the one tree. A detached HEAD falls back to the basename.
+func gitSession() error {
+	if isLinkedWorktree() {
+		// symbolic-ref resolves the branch even on an unborn/orphan branch
+		// (`git worktree add --orphan`), where rev-parse --abbrev-ref HEAD
+		// would fail; it errors cleanly on a detached HEAD, which then falls
+		// back to the directory basename below.
+		if branch, err := capture("git", "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil && branch != "" {
+			fmt.Println(branch)
+			return nil
+		}
+	}
+	root, err := capture("git", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return err
+	}
+	fmt.Println(filepath.Base(root))
+	return nil
+}
+
+// isLinkedWorktree reports whether the current directory is inside a linked
+// git worktree (created by `git worktree add`) rather than the repository's
+// primary working tree. A linked worktree has a per-worktree git dir
+// (.git/worktrees/<name>) distinct from the shared common dir (the main .git);
+// in the primary tree the two are the same.
+func isLinkedWorktree() bool {
+	gitDir, err := capture("git", "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return false
+	}
+	commonDir, err := capture("git", "rev-parse", "--git-common-dir")
+	if err != nil {
+		return false
+	}
+	return canonGitDir(gitDir) != canonGitDir(commonDir)
+}
+
+// canonGitDir resolves p to a canonical absolute path (made absolute relative
+// to the current directory, with symlinks evaluated). git emits these two
+// paths with different conventions -- --absolute-git-dir is a symlink-resolved
+// absolute path, while --git-common-dir may be relative to the cwd -- so they
+// must be canonicalized the same way before comparing, or a symlinked primary
+// worktree would be misread as linked.
+func canonGitDir(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = filepath.Clean(p)
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	return abs
 }
 
 func gitGraph(args []string) error {

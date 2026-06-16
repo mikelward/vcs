@@ -17,6 +17,13 @@
 //	            VCS for that file or directory instead of the current
 //	            working directory.
 //	rootdir     Print the repository root directory.
+//	session     Print a short identifier for the current checkout (for naming
+//	            multiplexer sessions): the independent working directory. A
+//	            linked git worktree prints its branch and a non-default jj
+//	            workspace prints its name (each has its own directory); the
+//	            primary working tree, hg, the default jj workspace, a citc
+//	            client (a .citc marker alongside the real jj/hg/git VCS), and a
+//	            g4 workspace all print the repository directory name.
 //	backend     Print the VCS backend (e.g. "git" for jj-on-git).
 //	hosting     Print the hosting platform (e.g. "github").
 //	prompt-info Print all prompt info in one invocation (see --format, --color).
@@ -117,6 +124,16 @@ func main() {
 			fmt.Println(info.RootDir)
 		}
 		return
+	case "session":
+		// A short identifier for the current checkout, used to name
+		// terminal-multiplexer session groups. Resolve the directory-name
+		// cases here (citc clients, where branches aren't used; and g4
+		// workspaces, which have no vcs-* backend). Otherwise fall through to
+		// the backend, which prints the branch (git/hg) or workspace (jj) name.
+		if name, ok := rootdirSessionName(forceVCS); ok {
+			fmt.Println(name)
+			return
+		}
 	case "backend":
 		info := detect(forceVCS)
 		if info.Backend != "" {
@@ -169,6 +186,34 @@ func main() {
 		fmt.Fprintf(os.Stderr, "vcs: exec %s: %v\n", binary, err)
 		os.Exit(1)
 	}
+}
+
+// rootdirSessionName reports the session name for checkouts where the branch
+// is not a useful per-session label and the workspace directory name should be
+// used instead, returning ("<basename>", true):
+//
+//   - A citc client (a `.citc` marker): citc workflows don't use branches, so
+//     the directory name is the identifier. `.citc` coexists with the real VCS
+//     marker (`.jj`/`.hg`/`.git`) in the same root -- the underlying VCS still
+//     drives every other command -- so this is checked regardless of which VCS
+//     vcsdetect reported.
+//   - A g4 workspace (`info.VCS == "g4"`, e.g. a Perforce `.p4config` client):
+//     g4 ships no vcs-* backend to dispatch a `session` subcommand to.
+//
+// For anything else it returns ("", false) so the caller dispatches to the
+// backend's `session` handler (which prints the branch or jj workspace name).
+func rootdirSessionName(forceVCS string) (string, bool) {
+	info := detect(forceVCS)
+	if info.RootDir == "" {
+		return "", false
+	}
+	if _, err := os.Stat(filepath.Join(info.RootDir, ".citc")); err == nil {
+		return filepath.Base(info.RootDir), true
+	}
+	if info.VCS == "g4" {
+		return filepath.Base(info.RootDir), true
+	}
+	return "", false
 }
 
 func detect(forceVCS string) *vcsdetect.Info {

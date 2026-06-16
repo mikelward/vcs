@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/mikelward/vcs/runner"
@@ -218,6 +219,8 @@ func dispatch(subcmd string, args []string) error {
 		return hgReword(args)
 	case "rootdir":
 		return hg("root")
+	case "session":
+		return hgSession()
 	case "show":
 		return hg(append([]string{"export"}, args...)...)
 	case "split":
@@ -254,6 +257,25 @@ func dispatch(subcmd string, args []string) error {
 	default:
 		return fmt.Errorf("unknown hg subcommand: %s", subcmd)
 	}
+}
+
+// hgSession prints a short identifier for the current checkout, used to name
+// multiplexer session groups. A named branch prints its own name; the
+// "default" branch prints the repository directory's basename instead, since
+// "default" isn't a useful per-checkout label. hg has no worktrees.
+// hgSession prints a short identifier for the current checkout, used to name
+// multiplexer session groups: the repository directory's basename. Mercurial
+// switches branches in place within a single working directory (it has no
+// per-branch worktrees), so every session rooted there shares one working
+// tree -- the branch is not an independent context and the directory name is
+// the right identifier.
+func hgSession() error {
+	root, err := capture(hgCmd, "root")
+	if err != nil {
+		return err
+	}
+	fmt.Println(filepath.Base(root))
+	return nil
 }
 
 func hgAtTip() error {

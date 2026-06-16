@@ -444,6 +444,32 @@ func TestRootdir(t *testing.T) {
 	}
 }
 
+func TestSession(t *testing.T) {
+	repo := newJJRepo(t)
+	// The default workspace has no distinguishing name, so session falls back
+	// to the workspace root's basename (the repository directory name).
+	out, err := runDispatch(t, repo, "session")
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	if got, want := strings.TrimSpace(out), filepath.Base(repo); got != want {
+		t.Errorf("default-workspace session = %q, want %q", got, want)
+	}
+
+	// A second, named workspace identifies itself by its workspace name -- the
+	// jj analog of a git worktree, and the only discriminator jj offers (it has
+	// no current-bookmark concept).
+	wt := filepath.Join(filepath.Dir(repo), "wt-review")
+	jjRun(t, repo, "workspace", "add", "--name", "review", wt)
+	out, err = runDispatch(t, wt, "session")
+	if err != nil {
+		t.Fatalf("session in workspace: %v", err)
+	}
+	if got := strings.TrimSpace(out); got != "review" {
+		t.Errorf("named-workspace session = %q, want %q", got, "review")
+	}
+}
+
 //
 // Backend-dependent dispatch (push/pull/submit/fastforward/review/upload).
 // newJJRepo was created with `jj git init` so backend() is "git". The

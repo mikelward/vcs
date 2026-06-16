@@ -33,6 +33,85 @@ func TestClearCache(t *testing.T) {
 	}
 }
 
+func TestRootdirSessionNameCitc(t *testing.T) {
+	// A .citc marker means a citc client: session is the root dir basename,
+	// resolved in the dispatcher.
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".citc"), 0755)
+
+	orig, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(orig)
+
+	name, ok := rootdirSessionName("")
+	if !ok {
+		t.Fatalf("rootdirSessionName: ok=false, want true for a .citc client")
+	}
+	if want := filepath.Base(dir); name != want {
+		t.Errorf("rootdirSessionName = %q, want %q", name, want)
+	}
+}
+
+func TestRootdirSessionNameCitcWithBackingVCS(t *testing.T) {
+	// A citc client carries the real VCS marker too (here .jj), so vcsdetect
+	// reports jj, not g4. The .citc marker must still win -- citc workflows
+	// don't use branches -- so session is the directory basename, not the jj
+	// workspace name.
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".citc"), 0755)
+	os.MkdirAll(filepath.Join(dir, ".jj"), 0755)
+
+	orig, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(orig)
+
+	name, ok := rootdirSessionName("")
+	if !ok {
+		t.Fatalf("rootdirSessionName: ok=false, want true for a .citc+.jj client")
+	}
+	if want := filepath.Base(dir); name != want {
+		t.Errorf("rootdirSessionName = %q, want %q", name, want)
+	}
+}
+
+func TestRootdirSessionNameG4Perforce(t *testing.T) {
+	// A Perforce client (.p4config) is detected as g4, which ships no vcs-*
+	// backend, so session must resolve to the directory basename here rather
+	// than falling through to a nonexistent vcs-g4.
+	dir := t.TempDir()
+	writeP4 := filepath.Join(dir, ".p4config")
+	if err := os.WriteFile(writeP4, []byte("P4CLIENT=x\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(orig)
+
+	name, ok := rootdirSessionName("")
+	if !ok {
+		t.Fatalf("rootdirSessionName: ok=false, want true for a .p4config (g4) client")
+	}
+	if want := filepath.Base(dir); name != want {
+		t.Errorf("rootdirSessionName = %q, want %q", name, want)
+	}
+}
+
+func TestRootdirSessionNamePlainRepo(t *testing.T) {
+	// A plain git repo is neither citc nor g4: the caller dispatches to the
+	// backend instead, so rootdirSessionName reports ok=false.
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".git"), 0755)
+
+	orig, _ := os.Getwd()
+	os.Chdir(dir)
+	defer os.Chdir(orig)
+
+	if _, ok := rootdirSessionName(""); ok {
+		t.Errorf("rootdirSessionName: ok=true, want false for a plain git repo")
+	}
+}
+
 func TestDetectForced(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, ".git"), 0755)
