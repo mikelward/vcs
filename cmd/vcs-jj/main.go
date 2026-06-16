@@ -192,6 +192,8 @@ func dispatch(subcmd string, args []string) error {
 		return jjReword(args)
 	case "rootdir":
 		return jj("workspace", "root")
+	case "session":
+		return jjSession()
 	case "show":
 		return jj(append([]string{"show"}, args...)...)
 	case "split":
@@ -221,6 +223,46 @@ func dispatch(subcmd string, args []string) error {
 	default:
 		return fmt.Errorf("unknown jj subcommand: %s", subcmd)
 	}
+}
+
+// jjSession prints a short identifier for the current checkout, used to name
+// multiplexer session groups. jj has no current-bookmark concept (the
+// "branch" subcommand returns nothing), so the jj workspace -- the analog of
+// a git worktree -- is the discriminator. A named, non-default workspace
+// prints its own name; the default workspace falls back to the workspace
+// root's basename (the repository name).
+func jjSession() error {
+	if name := currentWorkspaceName(); name != "" && name != "default" {
+		fmt.Println(name)
+		return nil
+	}
+	root, err := capture("jj", "--ignore-working-copy", "workspace", "root")
+	if err != nil {
+		return err
+	}
+	fmt.Println(filepath.Base(root))
+	return nil
+}
+
+// currentWorkspaceName returns the name of the current jj workspace, or ""
+// if it can't be determined unambiguously. jj marks each workspace's
+// working-copy commit as "<name>@" in a commit's working_copies; the current
+// workspace's commit is "@", so its working_copies normally lists just this
+// workspace. --ignore-working-copy avoids snapshotting the working copy,
+// which matters because this runs at shell/session startup.
+func currentWorkspaceName() string {
+	out, err := capture("jj", "--ignore-working-copy", "log", "--no-graph",
+		"-r", "@", "-T", "working_copies")
+	if err != nil {
+		return ""
+	}
+	// Expect a single "<name>@" token. Zero or several (multiple workspaces
+	// sharing the working-copy commit) is ambiguous: let the caller fall back.
+	fields := strings.Fields(out)
+	if len(fields) != 1 {
+		return ""
+	}
+	return strings.TrimSuffix(fields[0], "@")
 }
 
 func jjAtTip() error {

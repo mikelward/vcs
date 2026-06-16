@@ -970,6 +970,115 @@ func TestRootdir(t *testing.T) {
 	}
 }
 
+func TestSession(t *testing.T) {
+	_, local := newGitRepo(t)
+	// In the primary working tree, branches are switched in place and every
+	// session there shares the one tree, so session is the repo directory
+	// basename -- not the branch name, regardless of which branch is checked
+	// out.
+	out, err := runDispatch(t, local, "session")
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	if got, want := strings.TrimSpace(out), filepath.Base(local); got != want {
+		t.Errorf("primary-tree session = %q, want %q", got, want)
+	}
+
+	// Still the basename after checking out a feature branch in place.
+	gitRun(t, local, "checkout", "-q", "-b", "feature/x")
+	out, err = runDispatch(t, local, "session")
+	if err != nil {
+		t.Fatalf("session on branch: %v", err)
+	}
+	if got, want := strings.TrimSpace(out), filepath.Base(local); got != want {
+		t.Errorf("primary-tree feature-branch session = %q, want %q", got, want)
+	}
+}
+
+func TestSessionWorktree(t *testing.T) {
+	_, local := newGitRepo(t)
+	// A linked worktree has its own directory and its own branch (git allows a
+	// branch in only one worktree at a time), so it is an independent context:
+	// session prints the worktree's branch.
+	wt := filepath.Join(filepath.Dir(local), "wt-feature")
+	gitRun(t, local, "worktree", "add", "-b", "feature/x", wt)
+	out, err := runDispatch(t, wt, "session")
+	if err != nil {
+		t.Fatalf("session in worktree: %v", err)
+	}
+	if got := strings.TrimSpace(out); got != "feature/x" {
+		t.Errorf("worktree session = %q, want %q", got, "feature/x")
+	}
+
+	// The primary tree it was created from still reports the repo basename.
+	out, err = runDispatch(t, local, "session")
+	if err != nil {
+		t.Fatalf("session in primary tree: %v", err)
+	}
+	if got, want := strings.TrimSpace(out), filepath.Base(local); got != want {
+		t.Errorf("primary-tree session = %q, want %q", got, want)
+	}
+}
+
+func TestCanonGitDir(t *testing.T) {
+	// The same git dir reached through a symlink must canonicalize identically,
+	// so a symlinked primary worktree isn't misclassified as a linked worktree.
+	real := t.TempDir()
+	gitDir := filepath.Join(real, ".git")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	if got, want := canonGitDir(filepath.Join(link, ".git")), canonGitDir(gitDir); got != want {
+		t.Errorf("canonGitDir via symlink = %q, want %q", got, want)
+	}
+
+	// A path relative to the cwd canonicalizes to the same absolute dir.
+	orig, _ := os.Getwd()
+	defer os.Chdir(orig)
+	if err := os.Chdir(real); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := canonGitDir(".git"), canonGitDir(gitDir); got != want {
+		t.Errorf("canonGitDir(relative) = %q, want %q", got, want)
+	}
+}
+
+func TestSessionWorktreeUnbornBranch(t *testing.T) {
+	// A linked worktree on an unborn/orphan branch (no commit yet): rev-parse
+	// --abbrev-ref HEAD fails, but the branch name is still set, so session
+	// must print the branch (via symbolic-ref), not the worktree basename.
+	_, local := newGitRepo(t)
+	wt := filepath.Join(filepath.Dir(local), "wt-orphan")
+	gitRun(t, local, "worktree", "add", "-b", "tmpbranch", wt)
+	gitRun(t, wt, "checkout", "--orphan", "gh-pages")
+	out, err := runDispatch(t, wt, "session")
+	if err != nil {
+		t.Fatalf("session in unborn-branch worktree: %v", err)
+	}
+	if got := strings.TrimSpace(out); got != "gh-pages" {
+		t.Errorf("unborn-branch worktree session = %q, want %q", got, "gh-pages")
+	}
+}
+
+func TestSessionUnbornHead(t *testing.T) {
+	// A freshly initialized repo with no commits has an unborn HEAD, where
+	// `git rev-parse --abbrev-ref HEAD` exits 128. session must still print a
+	// usable label (the repo basename), not git's fatal error.
+	dir := t.TempDir()
+	gitRun(t, ".", "init", "-q", "-b", "main", dir)
+	out, err := runDispatch(t, dir, "session")
+	if err != nil {
+		t.Fatalf("session on unborn HEAD: %v", err)
+	}
+	if got, want := strings.TrimSpace(out), filepath.Base(dir); got != want {
+		t.Errorf("unborn-HEAD session = %q, want %q", got, want)
+	}
+}
+
 func TestPrecommitMissingHook(t *testing.T) {
 	_, local := newGitRepo(t)
 	// No hook file; precommit should return an error naming the hook

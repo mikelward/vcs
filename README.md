@@ -61,6 +61,7 @@ $ vcs -n commit -m "fix bug"
 |------------|-------------|
 | `detect` | Print the detected VCS name. |
 | `rootdir` | Print the repository root directory. |
+| `session` | Print a short identifier for the current checkout, for naming terminal-multiplexer session groups — the *independent working directory*. A branch only names a distinct context when it has its own directory (multiplexer sessions in one directory share a working tree), so a linked `git` worktree prints its branch and a non-default `jj` workspace prints its name; the primary working tree, `hg`, the default `jj` workspace, and a citc client print the repository directory name. |
 | `backend` | Print the VCS backend (e.g. `git` for jj-on-git). |
 | `hosting` | Print the hosting platform (e.g. `github`). |
 | `prompt-info` | Print all prompt info (project, subdir, branch, status, behind) in one invocation. See `--format`, `--color`. |

@@ -61,6 +61,7 @@ var Commands = []string{
 	"review",
 	"reword",
 	"rootdir",
+	"session",
 	"show",
 	"split",
 	"squash",

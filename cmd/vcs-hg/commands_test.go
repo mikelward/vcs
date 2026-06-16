@@ -449,6 +449,29 @@ func TestRootdir(t *testing.T) {
 	}
 }
 
+func TestSession(t *testing.T) {
+	_, local := newHgRepo(t)
+	// hg switches branches in place within one working directory (no
+	// per-branch worktrees), so session is always the repo directory basename.
+	out, err := runDispatch(t, local, "session")
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	if got, want := strings.TrimSpace(out), filepath.Base(local); got != want {
+		t.Errorf("session = %q, want %q", got, want)
+	}
+
+	// Still the basename on a named branch.
+	hgRun(t, local, "branch", "featureX")
+	out, err = runDispatch(t, local, "session")
+	if err != nil {
+		t.Fatalf("session on branch: %v", err)
+	}
+	if got, want := strings.TrimSpace(out), filepath.Base(local); got != want {
+		t.Errorf("named-branch session = %q, want %q", got, want)
+	}
+}
+
 func TestFetchtime(t *testing.T) {
 	_, local := newHgRepo(t)
 	out, err := runDispatch(t, local, "fetchtime")
