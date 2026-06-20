@@ -754,6 +754,32 @@ func TestDropNoArg(t *testing.T) {
 	}
 }
 
+func TestCherrypick(t *testing.T) {
+	_, local := newGitRepo(t)
+
+	// Create a commit on a side branch to cherry-pick later.
+	gitRun(t, local, "checkout", "-b", "side")
+	writeFile(t, local, "cherry.txt", "picked")
+	gitRun(t, local, "add", "cherry.txt")
+	gitRun(t, local, "commit", "-m", "cherry commit")
+	sha := gitOut(t, local, "rev-parse", "HEAD")
+
+	// Switch back to main and cherry-pick.
+	gitRun(t, local, "checkout", "main")
+	_, err := runDispatch(t, local, "cherrypick", sha)
+	if err != nil {
+		t.Fatalf("cherrypick: %v", err)
+	}
+
+	log := gitOut(t, local, "log", "--oneline")
+	if !strings.Contains(log, "cherry commit") {
+		t.Errorf("cherrypick did not apply commit: %q", log)
+	}
+	if _, err := os.Stat(filepath.Join(local, "cherry.txt")); err != nil {
+		t.Errorf("cherry.txt missing after cherrypick: %v", err)
+	}
+}
+
 func TestFetchtime(t *testing.T) {
 	_, local := newGitRepo(t)
 	// Remove FETCH_HEAD written by newGitRepo's clone.

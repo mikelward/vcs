@@ -142,6 +142,8 @@ func dispatch(subcmd string, args []string) error {
 			return hg(append([]string{"update"}, args...)...)
 		}
 		return hg(append([]string{"checkout"}, args...)...)
+	case "cherrypick":
+		return hg(append([]string{"graft"}, args...)...)
 	case "commit":
 		return hg(append([]string{"commit"}, args...)...)
 	case "commitforce":
