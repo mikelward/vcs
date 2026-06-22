@@ -73,7 +73,13 @@ make clean  # remove built binaries
 
 ## Branching
 
-- **Workflow.** `claude/<short-topic>` branch off `origin/main` → PR → merge
+- **Branch naming.** Feature branches are prefixed with the agent's own
+  short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code,
+  `codex/...` for Codex, `cursor/...` for Cursor, etc.). Human contributors
+  pick a name that identifies them. The placeholder `<agent>` below stands
+  in for whichever prefix you use — don't hard-code `claude/` unless you
+  *are* Claude Code.
+- **Workflow.** `<agent>/<short-topic>` branch off `origin/main` → PR → merge
   via rebase or squash. One topic per branch. Follow-up work after a merge
   goes on a new branch. Never commit to `main` / `master`.
 - **One commit per logical surviving change.** Rewrite unmerged commits
@@ -84,7 +90,7 @@ make clean  # remove built binaries
   shared/merged branches.
 - **Merge cue (`merged` / `I merged` / `landed` / merge webhook) runs hygiene
   *before* engaging with the rest of the message:** `git fetch origin`, cut
-  a fresh `claude/<short-topic>` branch off `origin/main`, announce the switch.
+  a fresh `<agent>/<short-topic>` branch off `origin/main`, announce the switch.
 - End every reply with the open-PR link (or `.../compare/main...<branch>`
   until a PR exists). Never link to a closed or merged PR.
 
