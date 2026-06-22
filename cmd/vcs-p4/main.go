@@ -118,7 +118,7 @@ func dispatch(subcmd string, args []string) error {
 	case "diffedit":
 		return fmt.Errorf("diffedit not supported in Perforce")
 	case "diffstat":
-		return p4(append([]string{"diff"}, args...)...)
+		return p4(append([]string{"diff", "-ds"}, args...)...)
 	case "drop":
 		return p4(append([]string{"revert"}, args...)...)
 	case "evolve":
@@ -152,7 +152,7 @@ func dispatch(subcmd string, args []string) error {
 	case "outgoing", "unpushed", "unmerged":
 		return p4(append([]string{"opened"}, args...)...)
 	case "pending":
-		return p4("changes", "-s", "pending")
+		return p4Pending()
 	case "precommit", "presubmit":
 		// Perforce handles these via server-side submit triggers, return nil
 		return nil
@@ -160,8 +160,10 @@ func dispatch(subcmd string, args []string) error {
 		return fmt.Errorf("rebase not supported in Perforce")
 	case "remove", "rm":
 		return p4(append([]string{"delete"}, args...)...)
-	case "restore", "revert":
+	case "restore":
 		return p4(append([]string{"revert"}, args...)...)
+	case "revert":
+		return p4Revert(args)
 	case "review", "upload", "uploadchain":
 		return p4(append([]string{"change"}, args...)...)
 	case "rootdir":
@@ -184,15 +186,50 @@ func dispatch(subcmd string, args []string) error {
 }
 
 func p4AtTip() error {
-	// Syncing with preview flag to check if there are updates.
-	out, err := capture(p4Cmd, "sync", "-n")
+	// Syncing with preview flag and -m 1 to cheaply check whether any updates exist.
+	// `p4 sync -n -m 1` prints either a file line to sync or an "...up-to-date." message.
+	// Match the suffix (rather than substring) so file paths containing "up-to-date"
+	// don't false-positive.
+	out, err := capture(p4Cmd, "sync", "-n", "-m", "1")
 	if err != nil {
 		return err
 	}
-	if out != "" {
-		return fmt.Errorf("not at tip (updates available on server)")
+	if out == "" || strings.HasSuffix(strings.TrimSpace(out), "up-to-date.") {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("not at tip (updates available on server)")
+}
+
+func p4Pending() error {
+	client := "$P4CLIENT"
+	if !runner.DryRun {
+		c, err := captureP4Client()
+		if err != nil {
+			return err
+		}
+		client = c
+	}
+	return p4("changes", "-s", "pending", "-c", client)
+}
+
+func p4Revert(args []string) error {
+	// Bare `revert` reverts every opened file in the workspace, matching
+	// `git reset --hard` / `hg revert --all`. `p4 revert` requires a
+	// filespec, and `...` is relative to cwd — use `//<client>/...` so
+	// running from a subdirectory still covers the whole client. `-Si`
+	// also reverts an open stream spec (default p4 revert leaves it).
+	if len(args) != 0 {
+		return p4(append([]string{"revert"}, args...)...)
+	}
+	client := "$P4CLIENT"
+	if !runner.DryRun {
+		c, err := captureP4Client()
+		if err != nil {
+			return err
+		}
+		client = c
+	}
+	return p4("revert", "-Si", fmt.Sprintf("//%s/...", client))
 }
 
 func p4Base(args []string) error {
@@ -212,17 +249,25 @@ func p4Base(args []string) error {
 }
 
 func p4PrintClient() error {
-	out, err := capture(p4Cmd, "info")
+	client, err := captureP4Client()
 	if err != nil {
 		return err
 	}
+	fmt.Println(client)
+	return nil
+}
+
+func captureP4Client() (string, error) {
+	out, err := capture(p4Cmd, "info")
+	if err != nil {
+		return "", err
+	}
 	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(line, "Client name:") {
-			fmt.Println(strings.TrimSpace(strings.TrimPrefix(line, "Client name:")))
-			return nil
+			return strings.TrimSpace(strings.TrimPrefix(line, "Client name:")), nil
 		}
 	}
-	return fmt.Errorf("could not find client name in info")
+	return "", fmt.Errorf("could not find client name in info")
 }
 
 func p4Copy(args []string) error {
