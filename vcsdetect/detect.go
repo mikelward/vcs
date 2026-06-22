@@ -12,7 +12,7 @@ import (
 
 // Info holds the detected VCS information for a directory.
 type Info struct {
-	VCS     string // "git", "hg", "jj", "g4"
+	VCS     string // "git", "hg", "jj", "p4"
 	Backend string // "git", "piper", etc.
 	Hosting string // "github", "gitlab", "bitbucket", "sourcehut", "gerrit"
 	RootDir string // absolute path to the repo root
@@ -90,8 +90,8 @@ func Detect(dir string) (*Info, error) {
 			{".jj", "jj"},
 			{".hg", "hg"},
 			{".git", "git"},
-			{".citc", "g4"},
-			{".p4config", "g4"},
+			{".citc", "p4"},
+			{".p4config", "p4"},
 		} {
 			if _, err := os.Stat(filepath.Join(d, marker.dir)); err == nil {
 				vcsName = marker.vcs

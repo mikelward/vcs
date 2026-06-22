@@ -1,4 +1,4 @@
-BINARIES = vcs vcs-git vcs-hg vcs-jj
+BINARIES = vcs vcs-git vcs-hg vcs-jj vcs-p4
 
 # Default PREFIX: ~/.local for non-root, /usr/local for root.
 ifeq ($(shell id -u),0)
@@ -23,6 +23,9 @@ vcs-hg: $(SOURCES)
 
 vcs-jj: $(SOURCES)
 	go build -o $@ ./cmd/vcs-jj
+
+vcs-p4: $(SOURCES)
+	go build -o $@ ./cmd/vcs-p4
 
 test:
 	go test ./...

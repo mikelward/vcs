@@ -1,11 +1,11 @@
 package main
 
 import (
+	"github.com/mikelward/vcs/runner"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"github.com/mikelward/vcs/runner"
 
 	vcs "github.com/mikelward/vcs"
 )

@@ -2,7 +2,7 @@
 
 A unified command-line interface for multiple version control systems.
 Compiled Go binaries that provide a consistent set of subcommands across
-Git, Mercurial, and Jujutsu.
+Git, Mercurial, Jujutsu, and Perforce.
 
 Originally a set of bash shell functions; reimplemented in Go for speed
 and portability (works in bash, fish, zsh, or any shell).
@@ -14,6 +14,7 @@ and portability (works in bash, fish, zsh, or any shell).
 | [Git](https://git-scm.com/) | `vcs-git` | |
 | [Mercurial](https://www.mercurial-scm.org/) | `vcs-hg` | Uses `chg` when available for faster startup |
 | [Jujutsu](https://github.com/jj-vcs/jj) | `vcs-jj` | Supports both git and piper backends |
+| [Perforce](https://help.perforce.com/) | `vcs-p4` | Translation backend for p4/g4 |
 
 ## Usage
 
@@ -42,7 +43,7 @@ vcs-hg --hg-path=/usr/bin/chg log
 
 | Flag | Description |
 |------|-------------|
-| `--vcs=NAME` | Skip auto-detection; use the given VCS (`git`, `hg`, `jj`). |
+| `--vcs=NAME` | Skip auto-detection; use the given VCS (`git`, `hg`, `jj`, `p4`). |
 | `--hg-path=PATH` | Path to `hg` or `chg` binary (passed through to `vcs-hg`). Useful for callers that cache the lookup. |
 | `-n`, `--dry-run`, `--simulate` | Print the underlying VCS command to stderr instead of running it. Must appear before the subcommand. Can also be toggled via the `VCS_DRY_RUN` environment variable. |
 | `--list-commands` | Print all supported subcommand names, one per line. Useful for shell integration (see below). |
@@ -77,74 +78,74 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 
 ### Everyday commands
 
-| Command | Description | Git | Hg | Jj |
-|---------|-------------|-----|----|----|
-| `status` | Show working copy status | `git status --short` | `hg status` | `jj diff --summary` (if undescribed) |
-| `commit` | Record changes | `git commit` | `hg commit` | `jj commit` |
-| `amend` | Amend the current commit | `git commit --amend` | `hg amend` | `jj squash` |
-| `diff` / `diffs` | Show changes | `git diff` | `hg diff` | `jj diff` |
-| `diffstat` | Show change statistics | `git diff --stat` | `hg diff --stat` | `jj diff --stat` |
-| `add` | Track files | `git add --intent-to-add` | `hg add` | `jj file track` |
-| `addremove` | Track new, remove missing | `git add --all` | `hg addremove` | (no-op, auto-tracked) |
-| `graph` | Show commit graph | `git log --graph` | `hg log --graph` | `jj log` |
-| `changelog` | One-line log | `git log --oneline` | `hg log --template` | `jj log --template` |
-| `show` | Show a commit | `git show` | `hg export` | `jj show` |
-| `count` | Count commits reachable from HEAD | `git rev-list --count HEAD` | `hg log -r ancestors(.)+.` | `jj log -r ancestors(@)\|@` |
+| Command | Description | Git | Hg | Jj | P4 |
+|---------|-------------|-----|----|----|----|
+| `status` | Show working copy status | `git status --short` | `hg status` | `jj diff --summary` (if undescribed) | `p4 status` |
+| `commit` | Record changes | `git commit` | `hg commit` | `jj commit` | `p4 submit` |
+| `amend` | Amend the current commit | `git commit --amend` | `hg amend` | `jj squash` | `p4 change` |
+| `diff` / `diffs` | Show changes | `git diff` | `hg diff` | `jj diff` | `p4 diff` |
+| `diffstat` | Show change statistics | `git diff --stat` | `hg diff --stat` | `jj diff --stat` | `p4 diff` |
+| `add` | Track files | `git add --intent-to-add` | `hg add` | `jj file track` | `p4 add` |
+| `addremove` | Track new, remove missing | `git add --all` | `hg addremove` | (no-op, auto-tracked) | `p4 reconcile` |
+| `graph` | Show commit graph | `git log --graph` | `hg log --graph` | `jj log` | `p4 changes` |
+| `changelog` | One-line log | `git log --oneline` | `hg log --template` | `jj log --template` | `p4 changes` |
+| `show` | Show a commit | `git show` | `hg export` | `jj show` | `p4 describe` |
+| `count` | Count commits reachable from HEAD | `git rev-list --count HEAD` | `hg log -r ancestors(.)+.` | `jj log -r ancestors(@)\|@` | `p4 changes` |
 
 ### Navigation
 
-| Command | Description | Git | Hg | Jj |
-|---------|-------------|-----|----|----|
-| `checkout` / `goto` | Switch to revision | `git checkout` | `hg checkout` / `hg update` | `jj new` |
-| `next` | Move to child commit | children search | `hg update -r min(children(.))` | `jj next` |
-| `prev` | Move to parent commit | `git checkout HEAD~` | `hg update -r .^` | `jj prev` |
-| `branch` | Print current branch | `git rev-parse --abbrev-ref` | `hg branch` | (no-op) |
-| `branches` | List branches | `git branch` | `hg branches` | `jj bookmark list` |
-| `base` | Show current commit summary | `git log -1 --oneline` | `hg log -r .` | `jj log -r @\|@-` |
-| `map` | Show base or graph | base if at tip, else graph | same | same |
+| Command | Description | Git | Hg | Jj | P4 |
+|---------|-------------|-----|----|----|----|
+| `checkout` / `goto` | Switch to revision | `git checkout` | `hg checkout` / `hg update` | `jj new` | `p4 sync` |
+| `next` | Move to child commit | children search | `hg update -r min(children(.))` | `jj next` | (not supported) |
+| `prev` | Move to parent commit | `git checkout HEAD~` | `hg update -r .^` | `jj prev` | (not supported) |
+| `branch` | Print current branch | `git rev-parse --abbrev-ref` | `hg branch` | (no-op) | print client name |
+| `branches` | List branches | `git branch` | `hg branches` | `jj bookmark list` | `p4 clients` |
+| `base` | Show current commit summary | `git log -1 --oneline` | `hg log -r .` | `jj log -r @\|@-` | `p4 describe` |
+| `map` | Show base or graph | base if at tip, else graph | same | same | `p4 opened` + `p4 changes` |
 
 ### History editing
 
-| Command | Description | Git | Hg | Jj |
-|---------|-------------|-----|----|----|
-| `reword` | Edit commit message only | `git commit --amend --allow-empty` | `hg commit --amend -e` | `jj describe` |
-| `describe` | Edit commit message | `git commit --amend --only` | `hg commit --amend` | `jj describe` |
-| `squash` | Squash commits | `git merge --squash` | `hg fold` | `jj squash` |
-| `split` | Split a commit | `git rebase -i` | `hg split` | `jj split` |
-| `drop` | Remove a commit | `git rebase --onto` | `hg prune` | `jj abandon` |
-| `graft` / `pick` | Copy a commit | `git cherry-pick` | `hg graft` | `jj duplicate` |
-| `rebase` | Rebase commits | `git rebase` | `hg rebase` | `jj rebase` |
-| `histedit` / `diffedit` | Interactive history edit | `git rebase -i` | `hg histedit` | `jj diffedit` |
-| `undo` | Undo last operation | `git reset --mixed HEAD~` | `hg undo` | `jj undo` |
-| `unamend` | Undo last amend | `git reset --mixed HEAD@{1}` | `hg unamend` | `jj undo` |
-| `uncommit` | Undo commit, keep changes | `git reset --soft HEAD~` | `hg uncommit` | `jj squash --from @-` |
+| Command | Description | Git | Hg | Jj | P4 |
+|---------|-------------|-----|----|----|----|
+| `reword` | Edit commit message only | `git commit --amend --allow-empty` | `hg commit --amend -e` | `jj describe` | `p4 change` |
+| `describe` | Edit commit message | `git commit --amend --only` | `hg commit --amend` | `jj describe` | `p4 change` |
+| `squash` | Squash commits | `git merge --squash` | `hg fold` | `jj squash` | (not supported) |
+| `split` | Split a commit | `git rebase -i` | `hg split` | `jj split` | (not supported) |
+| `drop` | Remove a commit | `git rebase --onto` | `hg prune` | `jj abandon` | `p4 revert` |
+| `graft` / `pick` | Copy a commit | `git cherry-pick` | `hg graft` | `jj duplicate` | `p4 integrate` |
+| `rebase` | Rebase commits | `git rebase` | `hg rebase` | `jj rebase` | (not supported) |
+| `histedit` / `diffedit` | Interactive history edit | `git rebase -i` | `hg histedit` | `jj diffedit` | (not supported) |
+| `undo` | Undo last operation | `git reset --mixed HEAD~` | `hg undo` | `jj undo` | (not supported) |
+| `unamend` | Undo last amend | `git reset --mixed HEAD@{1}` | `hg unamend` | `jj undo` | (not supported) |
+| `uncommit` | Undo commit, keep changes | `git reset --soft HEAD~` | `hg uncommit` | `jj squash --from @-` | (not supported) |
 
 ### File operations
 
-| Command | Description | Git | Hg | Jj |
-|---------|-------------|-----|----|----|
-| `copy` | Copy file (VCS-aware) | `cp` + `git add` | `hg copy` | `cp` |
-| `move` / `rename` | Rename file | `git mv` | `hg rename` | `mv` |
-| `remove` / `rm` | Remove file | `git rm` | `hg remove` | `rm` + `jj file untrack` |
-| `restore` | Restore file to committed state | `git checkout --` | `hg revert` | `jj restore` |
-| `revert` | Revert all changes | `git reset --hard` | `hg revert` | `jj restore` |
-| `ignore` | Add to ignore file | append to `.gitignore` | append to `.hgignore` | append to `.gitignore` |
-| `track` | Track file | `git add --intent-to-add` | `hg add` | `jj file track` |
-| `untrack` | Stop tracking file | `git rm --cached` | `hg forget` | `jj untrack` |
+| Command | Description | Git | Hg | Jj | P4 |
+|---------|-------------|-----|----|----|----|
+| `copy` | Copy file (VCS-aware) | `cp` + `git add` | `hg copy` | `cp` | `p4 integrate` / `cp` + `p4 add` |
+| `move` / `rename` | Rename file | `git mv` | `hg rename` | `mv` | `p4 move` |
+| `remove` / `rm` | Remove file | `git rm` | `hg remove` | `rm` + `jj file untrack` | `p4 delete` |
+| `restore` | Restore file to committed state | `git checkout --` | `hg revert` | `jj restore` | `p4 revert` |
+| `revert` | Revert all changes | `git reset --hard` | `hg revert` | `jj restore` | `p4 revert` |
+| `ignore` | Add to ignore file | append to `.gitignore` | append to `.hgignore` | append to `.gitignore` | append to `.p4ignore` |
+| `track` | Track file | `git add --intent-to-add` | `hg add` | `jj file track` | `p4 add` |
+| `untrack` | Stop tracking file | `git rm --cached` | `hg forget` | `jj untrack` | `p4 revert -k` |
 
 ### Remote operations
 
-| Command | Description | Git | Hg | Jj |
-|---------|-------------|-----|----|----|
-| `pull` | Fetch and update | `git pull --rebase --log` | `hg pull --update --rebase` | `jj git fetch` / `jj sync` |
-| `push` | Push changes | `git push` | `hg push` | `jj git push` / `jj upload` |
-| `fastforward` | Fast-forward only | `git pull --ff-only` | `hg sync --tool=internal:fail` | `jj git fetch` |
-| `incoming` / `unpulled` | Show what would be pulled | `git log HEAD..@{upstream}` | `hg incoming` | `jj op log` |
-| `outgoing` / `unpushed` | Show what would be pushed | `git log HEAD --not --remotes` | `hg log -r draft()` | `jj log -r mutable()` |
-| `unmerged` | List branches not merged to main | `git branch -v --no-merged origin/main` | `hg log -r "bookmark() and draft()"` | `jj log -r "bookmarks() & mutable()"` |
-| `pending` | Show uncommitted/unpushed | outgoing or status | `hg status` | `jj log -r mutable()` |
-| `review` / `upload` | Push and create PR | `git push` + `gh pr create` | (not supported) | `jj git push` + `gh pr create` |
-| `submit` | Push to remote | `git push` | `hg submit` | `jj git push` / `jj submit` |
+| Command | Description | Git | Hg | Jj | P4 |
+|---------|-------------|-----|----|----|----|
+| `pull` | Fetch and update | `git pull --rebase --log` | `hg pull --update --rebase` | `jj git fetch` / `jj sync` | `p4 sync` |
+| `push` | Push changes | `git push` | `hg push` | `jj git push` / `jj upload` | `p4 submit` |
+| `fastforward` | Fast-forward only | `git pull --ff-only` | `hg sync --tool=internal:fail` | `jj git fetch` | `p4 sync` |
+| `incoming` / `unpulled` | Show what would be pulled | `git log HEAD..@{upstream}` | `hg incoming` | `jj op log` | `p4 sync -n` |
+| `outgoing` / `unpushed` | Show what would be pushed | `git log HEAD --not --remotes` | `hg log -r draft()` | `jj log -r mutable()` | `p4 opened` |
+| `unmerged` | List branches not merged to main | `git branch -v --no-merged origin/main` | `hg log -r "bookmark() and draft()"` | `jj log -r "bookmarks() & mutable()"` | `p4 opened` |
+| `pending` | Show uncommitted/unpushed | outgoing or status | `hg status` | `jj log -r mutable()` | `p4 changes -s pending` |
+| `review` / `upload` | Push and create PR | `git push` + `gh pr create` | (not supported) | `jj git push` + `gh pr create` | `p4 change` |
+| `submit` | Push to remote | `git push` | `hg submit` | `jj git push` / `jj submit` | `p4 submit` |
 
 ### Inspection
 
