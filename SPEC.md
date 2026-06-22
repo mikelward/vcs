@@ -8,7 +8,7 @@ the native commands of whichever VCS is active in the current directory.
 
 ## Design Goals
 
-1. **Unified interface**: Same subcommand names across Git, Mercurial, and Jujutsu.
+1. **Unified interface**: Same subcommand names across Git, Mercurial, Jujutsu, and Perforce.
 2. **Speed**: Compiled Go binaries with minimal overhead. Uses `chg` over `hg`,
    `syscall.Exec` to avoid extra processes, and `.vcs_cache` to skip repeated detection.
 3. **Portability**: Works in any shell (bash, fish, zsh, etc.) since these are
@@ -22,7 +22,7 @@ the native commands of whichever VCS is active in the current directory.
 vcs (dispatcher)
  |
  +-- detects VCS via vcsdetect package
- +-- execs vcs-{git,hg,jj} via syscall.Exec
+ +-- execs vcs-{git,hg,jj,p4} via syscall.Exec
       |
       +-- translates subcommand to native VCS commands
       +-- runs native VCS via os/exec
@@ -40,6 +40,7 @@ vcs (dispatcher)
 | `cmd/vcs-git` | Git subcommand translations |
 | `cmd/vcs-hg` | Mercurial subcommand translations |
 | `cmd/vcs-jj` | Jujutsu subcommand translations |
+| `cmd/vcs-p4` | Perforce subcommand translations |
 
 ## VCS Detection
 
@@ -50,7 +51,7 @@ Detection proceeds as follows:
    - `.jj` → jj (highest priority)
    - `.hg` → hg
    - `.git` → git
-   - `.citc` or `.p4config` → g4
+   - `.citc` or `.p4config` → p4
 3. Detect backend (e.g. read `.jj/repo/store/type` for jj).
 4. Detect hosting by parsing the git remote origin URL from `.git/config`.
 5. Write `.vcs_cache` (best-effort, ignores write failures on read-only filesystems).
@@ -70,7 +71,7 @@ Two lines, no trailing whitespace:
 <rootdir>
 ```
 
-- `<vcs>`: `git`, `hg`, `jj`, or `g4`
+- `<vcs>`: `git`, `hg`, `jj`, or `p4`
 - `<backend>`: `git`, `piper`, etc. Use `-` if empty.
 - `<hosting>`: `github`, `gitlab`, `bitbucket`, `sourcehut`, `gerrit`. Use `-` if empty.
 - `<rootdir>`: Absolute path to repository root. May contain spaces.
@@ -125,7 +126,7 @@ suppressed by dry-run.
 
 ### Listing commands
 
-All binaries (`vcs`, `vcs-git`, `vcs-hg`, `vcs-jj`) support
+All binaries (`vcs`, `vcs-git`, `vcs-hg`, `vcs-jj`, `vcs-p4`) support
 `--list-commands`, which prints one command per line. This is intended for shell
 integration, e.g.:
 

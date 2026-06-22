@@ -5,7 +5,7 @@
 //
 // Flags:
 //
-//	--vcs=NAME            Force VCS type (git, hg, jj) instead of autodetecting.
+//	--vcs=NAME            Force VCS type (git, hg, jj, p4) instead of autodetecting.
 //	--hg-path=PATH        Path to hg/chg binary (passed through to vcs-hg).
 //	-n, --dry-run,        Print the command that would be run instead of
 //	    --simulate        executing it.
