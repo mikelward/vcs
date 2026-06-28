@@ -96,9 +96,18 @@ func dispatch(subcmd string, args []string) error {
 	case "base":
 		return p4Base(args)
 	case "branch":
-		return p4PrintClient()
+		// Perforce has no branch concept that maps cleanly; the old
+		// client-name mapping wasn't a branch. Refuse rather than mislead.
+		// TODO: try reporting the current stream (e.g. parse %Stream% from
+		// `p4 client -o`) once validated against a real depot.
+		return fmt.Errorf("branch not supported in Perforce")
 	case "branches":
-		return p4("clients")
+		// Refuse rather than mislead; `p4 clients` listed workspaces, not
+		// branches.
+		// TODO: try `p4 streams` here — streams are Perforce's lines of
+		// development, but may return nothing on classic (non-stream) depots,
+		// so leave unsupported until validated against a real depot.
+		return fmt.Errorf("branches not supported in Perforce")
 	case "change", "describe", "reword":
 		return p4(append([]string{"change"}, args...)...)
 	case "changed":
@@ -120,11 +129,21 @@ func dispatch(subcmd string, args []string) error {
 	case "diffstat":
 		return p4(append([]string{"diff", "-ds"}, args...)...)
 	case "drop":
-		return p4(append([]string{"revert"}, args...)...)
+		// `drop` removes a commit from history (git rebase --onto, hg prune,
+		// jj abandon). Perforce can't rewrite submitted history, and the old
+		// `p4 revert` mapping silently discarded pending changes instead —
+		// wrong and destructive. Refuse; use `vcs revert`/`vcs restore` to
+		// discard workspace changes explicitly.
+		return fmt.Errorf("drop not supported in Perforce; use 'vcs revert' to discard pending changes")
 	case "evolve":
 		return fmt.Errorf("evolve not supported in Perforce")
 	case "fastforward":
-		return p4("sync")
+		// Perforce has no fast-forward-only update. Plain `p4 sync` can
+		// schedule resolves on open files and clobber workspace changes,
+		// which violates fastforward's "fast, never risk merge conflicts"
+		// contract. Refuse rather than do something risky; use `pull`/`sync`
+		// (mapped to `p4 sync`) explicitly if that's what you want.
+		return fmt.Errorf("fastforward not supported in Perforce; use 'vcs pull' to sync")
 	case "fetchtime":
 		return p4Fetchtime()
 	case "fix":
@@ -246,15 +265,6 @@ func p4Base(args []string) error {
 		return fmt.Errorf("invalid changes output: %q", out)
 	}
 	return p4(append([]string{"describe", "-s", parts[1]}, args...)...)
-}
-
-func p4PrintClient() error {
-	client, err := captureP4Client()
-	if err != nil {
-		return err
-	}
-	fmt.Println(client)
-	return nil
 }
 
 func captureP4Client() (string, error) {

@@ -99,8 +99,8 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 | `checkout` / `goto` | Switch to revision | `git checkout` | `hg checkout` / `hg update` | `jj new` | `p4 sync` |
 | `next` | Move to child commit | children search | `hg update -r min(children(.))` | `jj next` | (not supported) |
 | `prev` | Move to parent commit | `git checkout HEAD~` | `hg update -r .^` | `jj prev` | (not supported) |
-| `branch` | Print current branch | `git rev-parse --abbrev-ref` | `hg branch` | (no-op) | print client name |
-| `branches` | List branches | `git branch` | `hg branches` | `jj bookmark list` | `p4 clients` |
+| `branch` | Print current branch | `git rev-parse --abbrev-ref` | `hg branch` | (no-op) | (not supported) |
+| `branches` | List branches | `git branch` | `hg branches` | `jj bookmark list` | (not supported) |
 | `base` | Show current commit summary | `git log -1 --oneline` | `hg log -r .` | `jj log -r @\|@-` | `p4 describe` |
 | `map` | Show base or graph | base if at tip, else graph | same | same | `p4 opened` + `p4 changes` |
 
@@ -112,7 +112,7 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 | `describe` | Edit commit message | `git commit --amend --only` | `hg commit --amend` | `jj describe` | `p4 change` |
 | `squash` | Squash commits | `git merge --squash` | `hg fold` | `jj squash` | (not supported) |
 | `split` | Split a commit | `git rebase -i` | `hg split` | `jj split` | (not supported) |
-| `drop` | Remove a commit | `git rebase --onto` | `hg prune` | `jj abandon` | `p4 revert` |
+| `drop` | Remove a commit | `git rebase --onto` | `hg prune` | `jj abandon` | (not supported) |
 | `graft` / `pick` | Copy a commit | `git cherry-pick` | `hg graft` | `jj duplicate` | `p4 integrate` |
 | `rebase` | Rebase commits | `git rebase` | `hg rebase` | `jj rebase` | (not supported) |
 | `histedit` / `diffedit` | Interactive history edit | `git rebase -i` | `hg histedit` | `jj diffedit` | (not supported) |
@@ -139,7 +139,7 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 |---------|-------------|-----|----|----|----|
 | `pull` | Fetch and update | `git pull --rebase --log` | `hg pull --update --rebase` | `jj git fetch` / `jj sync` | `p4 sync` |
 | `push` | Push changes | `git push` | `hg push` | `jj git push` / `jj upload` | `p4 submit` |
-| `fastforward` | Fast-forward only | `git pull --ff-only` | `hg sync --tool=internal:fail` | `jj git fetch` | `p4 sync` |
+| `fastforward` | Fast-forward only | `git pull --ff-only` | `hg sync --tool=internal:fail` | `jj git fetch` | (not supported) |
 | `incoming` / `unpulled` | Show what would be pulled | `git log HEAD..@{upstream}` | `hg incoming` | `jj op log` | `p4 sync -n` |
 | `outgoing` / `unpushed` | Show what would be pushed | `git log HEAD --not --remotes` | `hg log -r draft()` | `jj log -r mutable()` | `p4 opened` |
 | `unmerged` | List branches not merged to main | `git branch -v --no-merged origin/main` | `hg log -r "bookmark() and draft()"` | `jj log -r "bookmarks() & mutable()"` | `p4 opened` |
