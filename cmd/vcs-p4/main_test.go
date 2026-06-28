@@ -102,6 +102,68 @@ func TestPendingDryRunScopesToClient(t *testing.T) {
 	}
 }
 
+func TestFastforwardNotSupported(t *testing.T) {
+	old := runner.DryRun
+	runner.DryRun = true
+	t.Cleanup(func() { runner.DryRun = old })
+
+	out, err := captureIO(t, func() error {
+		return dispatch("fastforward", nil)
+	})
+	if err == nil {
+		t.Fatalf("expected fastforward to return an error; got output: %q", out)
+	}
+	if !strings.Contains(err.Error(), "not supported") {
+		t.Errorf("fastforward error should explain it's unsupported; got: %v", err)
+	}
+	// Must not fall through to a `p4 sync` that could schedule resolves.
+	if strings.Contains(out, "sync") {
+		t.Errorf("fastforward should not run any sync; got: %q", out)
+	}
+}
+
+func TestBranchAndBranchesNotSupported(t *testing.T) {
+	old := runner.DryRun
+	runner.DryRun = true
+	t.Cleanup(func() { runner.DryRun = old })
+
+	for _, cmd := range []string{"branch", "branches"} {
+		out, err := captureIO(t, func() error {
+			return dispatch(cmd, nil)
+		})
+		if err == nil {
+			t.Fatalf("expected %s to return an error; got output: %q", cmd, out)
+		}
+		if !strings.Contains(err.Error(), "not supported") {
+			t.Errorf("%s error should explain it's unsupported; got: %v", cmd, err)
+		}
+		// Must not fall back to listing clients/streams.
+		if strings.Contains(out, "clients") || strings.Contains(out, "streams") {
+			t.Errorf("%s should not run any p4 listing; got: %q", cmd, out)
+		}
+	}
+}
+
+func TestDropNotSupported(t *testing.T) {
+	old := runner.DryRun
+	runner.DryRun = true
+	t.Cleanup(func() { runner.DryRun = old })
+
+	out, err := captureIO(t, func() error {
+		return dispatch("drop", []string{"12345"})
+	})
+	if err == nil {
+		t.Fatalf("expected drop to return an error; got output: %q", out)
+	}
+	if !strings.Contains(err.Error(), "not supported") {
+		t.Errorf("drop error should explain it's unsupported; got: %v", err)
+	}
+	// Must not fall through to a `p4 revert` that would discard changes.
+	if strings.Contains(out, "revert") {
+		t.Errorf("drop should not run any revert; got: %q", out)
+	}
+}
+
 func TestRestoreWithArgsPassesThrough(t *testing.T) {
 	old := runner.DryRun
 	runner.DryRun = true
