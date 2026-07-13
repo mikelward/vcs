@@ -10,10 +10,11 @@ import (
 
 func TestSplitGitArgs(t *testing.T) {
 	tests := []struct {
-		name      string
-		args      []string
-		wantFlags []string
-		wantFiles []string
+		name         string
+		args         []string
+		wantFlags    []string
+		wantFiles    []string
+		wantDashdash bool
 	}{
 		{
 			name:      "no args",
@@ -46,16 +47,18 @@ func TestSplitGitArgs(t *testing.T) {
 			wantFiles: []string{"foo.go"},
 		},
 		{
-			name:      "double dash",
-			args:      []string{"-a", "--", "foo.go"},
-			wantFlags: []string{"-a", "--"},
-			wantFiles: []string{"foo.go"},
+			name:         "double dash",
+			args:         []string{"-a", "--", "foo.go"},
+			wantFlags:    []string{"-a"},
+			wantFiles:    []string{"foo.go"},
+			wantDashdash: true,
 		},
 		{
-			name:      "double dash only",
-			args:      []string{"--"},
-			wantFlags: []string{"--"},
-			wantFiles: nil,
+			name:         "double dash only",
+			args:         []string{"--"},
+			wantFlags:    nil,
+			wantFiles:    nil,
+			wantDashdash: true,
 		},
 		{
 			name:      "-C flag with value",
@@ -67,12 +70,15 @@ func TestSplitGitArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotFlags, gotFiles := splitGitArgs(tt.args)
+			gotFlags, gotFiles, gotDashdash := splitGitArgs(tt.args)
 			if !reflect.DeepEqual(gotFlags, tt.wantFlags) {
 				t.Errorf("flags = %v, want %v", gotFlags, tt.wantFlags)
 			}
 			if !reflect.DeepEqual(gotFiles, tt.wantFiles) {
 				t.Errorf("files = %v, want %v", gotFiles, tt.wantFiles)
+			}
+			if gotDashdash != tt.wantDashdash {
+				t.Errorf("dashdash = %v, want %v", gotDashdash, tt.wantDashdash)
 			}
 		})
 	}
