@@ -564,6 +564,22 @@ func TestRewordAndDescribe(t *testing.T) {
 	if got := gitOut(t, local, "log", "-1", "--format=%s"); got != "edited by test" {
 		t.Errorf("describe subject = %q", got)
 	}
+
+	// A bare message argument sets the new message without the editor.
+	if _, err := runDispatch(t, local, "reword", "git reword msg"); err != nil {
+		t.Fatalf("reword msg: %v", err)
+	}
+	if got := gitOut(t, local, "log", "-1", "--format=%s"); got != "git reword msg" {
+		t.Errorf("reword msg subject = %q", got)
+	}
+
+	// Flag form passes through unchanged (was silently discarded before).
+	if _, err := runDispatch(t, local, "reword", "-m", "git reword flag"); err != nil {
+		t.Fatalf("reword -m: %v", err)
+	}
+	if got := gitOut(t, local, "log", "-1", "--format=%s"); got != "git reword flag" {
+		t.Errorf("reword -m subject = %q", got)
+	}
 }
 
 //
