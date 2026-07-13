@@ -202,6 +202,41 @@ func TestRewordAndDescribe(t *testing.T) {
 	}
 }
 
+func TestRewordMessageArg(t *testing.T) {
+	_, local := newHgRepo(t)
+	writeFile(t, local, "r.txt", "x\n")
+	hgRun(t, local, "add", "r.txt")
+	hgRun(t, local, "commit", "-m", "pre-reword")
+	// Dirty a tracked file: reword must leave it out of the amend.
+	writeFile(t, local, "r.txt", "dirty\n")
+
+	// A bare message argument sets the new message; hg must not treat it
+	// as a filespec (which would amend just that file, message unchanged).
+	if _, err := runDispatch(t, local, "reword", "hg reword msg"); err != nil {
+		t.Fatalf("reword msg: %v", err)
+	}
+	if got := hgOut(t, local, "log", "-r", ".", "--template", "{desc}"); got != "hg reword msg" {
+		t.Errorf("reword msg = %q", got)
+	}
+
+	// Flag form passes through unchanged.
+	if _, err := runDispatch(t, local, "reword", "-m", "hg reword flag"); err != nil {
+		t.Fatalf("reword -m: %v", err)
+	}
+	if got := hgOut(t, local, "log", "-r", ".", "--template", "{desc}"); got != "hg reword flag" {
+		t.Errorf("reword -m = %q", got)
+	}
+
+	// Message only: the dirty change stays in the working copy and the
+	// committed content is untouched.
+	if got := hgOut(t, local, "status"); got != "M r.txt" {
+		t.Errorf("reword swept working-copy changes into the amend; status = %q", got)
+	}
+	if got := hgOut(t, local, "cat", "-r", ".", "r.txt"); got != "x" {
+		t.Errorf("reword changed committed content: %q", got)
+	}
+}
+
 func TestDescribe(t *testing.T) {
 	_, local := newHgRepo(t)
 	editor := editorStub(t)

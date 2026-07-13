@@ -307,11 +307,22 @@ func hgRevert(args []string) error {
 	return hg(append([]string{"revert"}, args...)...)
 }
 
+// hgReword edits the commit message only. With no args it opens the
+// editor; a bare first argument is taken as the new message (hg would
+// otherwise treat it as a filespec and amend just that file), and flag
+// arguments pass through unchanged. Every path excludes all files:
+// hg commit --amend otherwise folds the working-copy changes reported
+// by hg status into the amended changeset, breaking the message-only
+// contract.
 func hgReword(args []string) error {
+	base := []string{"commit", "--amend", "--exclude", "re:.*"}
 	if len(args) == 0 {
-		return hg("commit", "--amend", "-e")
+		return hg(append(base, "-e")...)
 	}
-	return hg(append([]string{"commit", "--amend"}, args...)...)
+	if !strings.HasPrefix(args[0], "-") {
+		return hg(append(append(base, "-m"), args...)...)
+	}
+	return hg(append(base, args...)...)
 }
 
 // hgPull translates the unified "pull" subcommand to "hg pull --update

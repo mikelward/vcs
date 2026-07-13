@@ -422,9 +422,16 @@ func jjReview(args []string) error {
 	return jj(append([]string{"upload"}, pushFlags...)...)
 }
 
+// jjReword edits the commit message only. With no args it opens the
+// editor; a bare first argument is taken as the new message, and flag
+// arguments (e.g. a user-supplied -m) pass through unchanged instead of
+// being mangled into "describe -m -m msg".
 func jjReword(args []string) error {
 	if len(args) == 0 {
 		return jj("describe")
+	}
+	if strings.HasPrefix(args[0], "-") {
+		return jj(append([]string{"describe"}, args...)...)
 	}
 	return jj(append([]string{"describe", "-m"}, args...)...)
 }

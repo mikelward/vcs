@@ -161,7 +161,7 @@ func dispatch(subcmd string, args []string) error {
 	case "review", "upload", "uploadchain":
 		return gitReview(args)
 	case "reword":
-		return git("commit", "--amend", "--only", "--allow-empty")
+		return gitReword(args)
 	case "rootdir":
 		return git("rev-parse", "--show-toplevel")
 	case "show":
@@ -447,6 +447,17 @@ func gitPending(args []string) error {
 		return git("status", append([]string{"--short"}, args...)...)
 	}
 	return nil
+}
+
+// gitReword edits the commit message only. With no args it opens the
+// editor; a bare first argument is taken as the new message (matching
+// vcs-hg and vcs-jj), and flag arguments pass through unchanged.
+func gitReword(args []string) error {
+	flags := []string{"--amend", "--only", "--allow-empty"}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		flags = append(flags, "-m")
+	}
+	return git("commit", append(flags, args...)...)
 }
 
 func gitRevert(args []string) error {

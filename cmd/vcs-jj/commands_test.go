@@ -193,6 +193,19 @@ func TestReword(t *testing.T) {
 	}
 }
 
+func TestRewordFlagArg(t *testing.T) {
+	repo := newJJRepo(t)
+	// A user-supplied -m passes through unchanged; it must not be
+	// mangled into "describe -m -m msg".
+	if _, err := runDispatch(t, repo, "reword", "-m", "jj reword flag"); err != nil {
+		t.Fatalf("reword -m: %v", err)
+	}
+	desc := jjOut(t, repo, "log", "--no-graph", "-r", "@", "-T", "description")
+	if !strings.Contains(desc, "jj reword flag") {
+		t.Errorf("reword -m: %q", desc)
+	}
+}
+
 func TestDescribe(t *testing.T) {
 	repo := newJJRepo(t)
 	if _, err := runDispatch(t, repo, "describe", "-m", "jj describe test"); err != nil {
