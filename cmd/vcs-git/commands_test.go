@@ -393,6 +393,25 @@ func TestPending(t *testing.T) {
 	}
 }
 
+func TestPendingNoUpstream(t *testing.T) {
+	_, local := newGitRepo(t)
+	// A branch with no upstream takes the status fallback; the probe for
+	// @{upstream} must not leak git's "fatal: no upstream" onto stderr.
+	gitRun(t, local, "checkout", "-b", "no-upstream")
+	writeFile(t, local, "dirty.txt", "x")
+
+	out, err := runDispatch(t, local, "pending")
+	if err != nil {
+		t.Fatalf("pending: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "dirty.txt") {
+		t.Errorf("pending fallback missing dirty file: %q", out)
+	}
+	if strings.Contains(out, "fatal") {
+		t.Errorf("pending leaked git error output: %q", out)
+	}
+}
+
 //
 //
 // count

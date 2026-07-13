@@ -442,11 +442,13 @@ func gitNext() error {
 }
 
 func gitPending(args []string) error {
-	err := git("log", append([]string{"--oneline", "@{upstream}..HEAD"}, args...)...)
-	if err != nil {
+	// Probe for an upstream quietly first: running git log with an
+	// inherited stderr would print "fatal: no upstream configured" on
+	// exactly the path the status fallback is designed for.
+	if _, err := capture("git", "rev-parse", "--abbrev-ref", "@{upstream}"); err != nil {
 		return git("status", append([]string{"--short"}, args...)...)
 	}
-	return nil
+	return git("log", append([]string{"--oneline", "@{upstream}..HEAD"}, args...)...)
 }
 
 // gitReword edits the commit message only. With no args it opens the
