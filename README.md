@@ -102,7 +102,7 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 | `branch` | Print current branch | `git rev-parse --abbrev-ref` | `hg branch` | (no-op) | (not supported) |
 | `branches` | List branches | `git branch` | `hg branches` | `jj bookmark list` | (not supported) |
 | `base` | Show current commit summary | `git log -1 --oneline` | `hg log -r .` | `jj log -r @\|@-` | `p4 describe` |
-| `map` | Show base or graph | base if at tip, else graph | same | same | `p4 opened` + `p4 changes` |
+| `map` | Show outgoing or graph | outgoing if at tip, else graph | same | same | `p4 opened` + `p4 changes` |
 
 ### History editing
 
