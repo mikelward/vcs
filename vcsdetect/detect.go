@@ -73,6 +73,14 @@ func WriteCache(dir string, info *Info) {
 // Detect finds the VCS for the given directory, checking the cache first.
 // If no cache exists, it walks up the directory tree looking for VCS markers.
 func Detect(dir string) (*Info, error) {
+	// Normalize to an absolute path: the walk-up loop below stops at
+	// filepath.Dir fixpoints, which for a relative path is "." rather than
+	// the filesystem root, and a relative RootDir would be persisted to the
+	// cache where it corrupts later invocations from other directories.
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+
 	// Try cache first.
 	if info, err := ReadCache(CachePath(dir)); err == nil {
 		return info, nil

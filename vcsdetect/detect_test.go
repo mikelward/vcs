@@ -124,6 +124,35 @@ func TestDetectSubdir(t *testing.T) {
 	}
 }
 
+func TestDetectRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	sub := filepath.Join(dir, "src")
+	os.MkdirAll(sub, 0755)
+	t.Chdir(sub)
+
+	// Relative "." must ascend past the cwd to find the repo root...
+	info, err := Detect(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.RootDir != dir {
+		t.Errorf("expected absolute rootdir %s, got %s", dir, info.RootDir)
+	}
+	// ...and the cache it wrote must hold the absolute root, not ".".
+	cached, err := ReadCache(CachePath(sub))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cached.RootDir != dir {
+		t.Errorf("expected cached rootdir %s, got %s", dir, cached.RootDir)
+	}
+}
+
 func TestDetectPriority(t *testing.T) {
 	// jj takes priority over git.
 	dir := t.TempDir()
