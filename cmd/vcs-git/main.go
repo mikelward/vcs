@@ -211,13 +211,15 @@ func capture(name string, args ...string) (string, error) {
 }
 
 // splitGitArgs splits args into flags and positional args,
-// handling -m/-C/-c/-F/-t which take a value.
-func splitGitArgs(args []string) (flags []string, files []string) {
+// handling -m/-C/-c/-F/-t which take a value. A bare "--" separator is
+// reported via dashdash rather than kept in flags so callers can inject
+// flags of their own (e.g. --all) after the user's flags.
+func splitGitArgs(args []string) (flags []string, files []string, dashdash bool) {
 	i := 0
 	for i < len(args) {
 		a := args[i]
 		if a == "--" {
-			flags = append(flags, a)
+			dashdash = true
 			i++
 			files = append(files, args[i:]...)
 			return
@@ -261,21 +263,22 @@ func gitPull(args []string) error {
 }
 
 func gitAmend(args []string) error {
-	flags, files := splitGitArgs(args)
-	if len(files) == 0 {
-		flags = append(flags, "--all")
-	}
-	allArgs := append([]string{"commit", "--amend", "--no-edit"}, flags...)
-	allArgs = append(allArgs, files...)
-	return runner.Run("git", allArgs...)
+	return gitCommitArgs([]string{"commit", "--amend", "--no-edit"}, args)
 }
 
 func gitCommit(args []string) error {
-	flags, files := splitGitArgs(args)
+	return gitCommitArgs([]string{"commit"}, args)
+}
+
+func gitCommitArgs(base []string, args []string) error {
+	flags, files, dashdash := splitGitArgs(args)
 	if len(files) == 0 {
 		flags = append(flags, "--all")
 	}
-	allArgs := append([]string{"commit"}, flags...)
+	allArgs := append(base, flags...)
+	if dashdash {
+		allArgs = append(allArgs, "--")
+	}
 	allArgs = append(allArgs, files...)
 	return runner.Run("git", allArgs...)
 }

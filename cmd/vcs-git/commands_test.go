@@ -483,6 +483,22 @@ func TestCommit(t *testing.T) {
 	}
 }
 
+func TestCommitTrailingDashdash(t *testing.T) {
+	_, local := newGitRepo(t)
+
+	// A bare trailing "--" with no files must still commit all tracked
+	// changes: --all has to land before the "--", not after it where git
+	// would read it as a pathspec.
+	writeFile(t, local, "d.txt", "first")
+	gitRun(t, local, "add", "d.txt")
+	if _, err := runDispatch(t, local, "commit", "-m", "dashdash commit", "--"); err != nil {
+		t.Fatalf("commit -m msg --: %v", err)
+	}
+	if got := gitOut(t, local, "log", "-1", "--format=%s"); got != "dashdash commit" {
+		t.Errorf("commit subject = %q", got)
+	}
+}
+
 func TestAmend(t *testing.T) {
 	_, local := newGitRepo(t)
 	writeFile(t, local, "a.txt", "one")
