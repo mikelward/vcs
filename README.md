@@ -131,7 +131,7 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 | `revert` | Revert all changes | `git reset --hard` | `hg revert` | `jj restore` | `p4 revert` |
 | `ignore` | Add to ignore file | append to `.gitignore` | append to `.hgignore` | append to `.gitignore` | append to `.p4ignore` |
 | `track` | Track file | `git add --intent-to-add` | `hg add` | `jj file track` | `p4 add` |
-| `untrack` | Stop tracking file | `git rm --cached` | `hg forget` | `jj untrack` | `p4 revert -k` |
+| `untrack` | Stop tracking file | `git rm --cached` | `hg forget` | `jj file untrack` | `p4 revert -k` |
 
 ### Remote operations
 

@@ -217,7 +217,7 @@ func dispatch(subcmd string, args []string) error {
 	case "unmerged":
 		return jjUnmerged(args)
 	case "untrack":
-		return jj(append([]string{"untrack"}, args...)...)
+		return jj(append([]string{"file", "untrack"}, args...)...)
 	default:
 		return fmt.Errorf("unknown jj subcommand: %s", subcmd)
 	}

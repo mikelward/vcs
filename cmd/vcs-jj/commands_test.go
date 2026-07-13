@@ -193,6 +193,23 @@ func TestReword(t *testing.T) {
 	}
 }
 
+// TestUntrackDryRun pins the untrack translation via dry-run: bare
+// "jj untrack" was removed from jj in favor of "jj file untrack".
+func TestUntrackDryRun(t *testing.T) {
+	old := runner.DryRun
+	runner.DryRun = true
+	t.Cleanup(func() { runner.DryRun = old })
+
+	out, err := captureIO(t, func() error { return dispatch("untrack", []string{"u.txt"}) })
+	if err != nil {
+		t.Fatalf("untrack dry-run: %v\n%s", err, out)
+	}
+	want := "+ jj --no-pager file untrack u.txt"
+	if !strings.Contains(out, want) {
+		t.Errorf("dry-run output missing %q; got: %q", want, out)
+	}
+}
+
 func TestRewordFlagArg(t *testing.T) {
 	repo := newJJRepo(t)
 	// A user-supplied -m passes through unchanged; it must not be
