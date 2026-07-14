@@ -128,7 +128,7 @@ func dispatch(subcmd string, args []string) error {
 	case "branch":
 		return hg("branch")
 	case "branches":
-		return hg("branches")
+		return hg(append([]string{"branches"}, args...)...)
 	case "change", "describe":
 		return hgChange(args)
 	case "changed":
@@ -189,7 +189,7 @@ func dispatch(subcmd string, args []string) error {
 	case "outgoing", "unpushed":
 		return hgOutgoing(args)
 	case "pending":
-		return hg("status")
+		return hg(append([]string{"status"}, args...)...)
 	case "pick":
 		return hg(append([]string{"graft"}, args...)...)
 	case "precommit":
@@ -227,9 +227,9 @@ func dispatch(subcmd string, args []string) error {
 	case "status":
 		return hg(append([]string{"status"}, args...)...)
 	case "submit":
-		return hg("submit")
+		return hg(append([]string{"submit"}, args...)...)
 	case "submitforce":
-		return hg("--config", "hooks.preoutgoing=", "--config", "hooks.pre-push=", "submit")
+		return hg(append([]string{"--config", "hooks.preoutgoing=", "--config", "hooks.pre-push=", "submit"}, args...)...)
 	case "track":
 		return hg(append([]string{"add"}, args...)...)
 	case "unamend":
