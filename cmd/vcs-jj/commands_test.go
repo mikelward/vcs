@@ -330,14 +330,16 @@ func TestStatus(t *testing.T) {
 func TestCount(t *testing.T) {
 	repo := newJJRepo(t)
 
-	// Fresh repo: only the empty working copy; the virtual root() commit
-	// must not be counted.
+	// Fresh repo: neither the empty working-copy commit nor the virtual
+	// root() commit counts -- there is no recorded history yet, matching
+	// git where `rev-list --count HEAD` has nothing to count in a new
+	// repo.
 	out, err := runDispatch(t, repo, "count")
 	if err != nil {
 		t.Fatalf("count: %v\n%s", err, out)
 	}
-	if strings.TrimSpace(out) != "1" {
-		t.Errorf("count on fresh repo: want 1, got %q", out)
+	if strings.TrimSpace(out) != "0" {
+		t.Errorf("count on fresh repo: want 0, got %q", out)
 	}
 
 	writeFile(t, repo, "a.txt", "x\n")
@@ -346,8 +348,8 @@ func TestCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count: %v\n%s", err, out)
 	}
-	if strings.TrimSpace(out) != "2" {
-		t.Errorf("count after one commit: want 2, got %q", out)
+	if strings.TrimSpace(out) != "1" {
+		t.Errorf("count after one commit: want 1, got %q", out)
 	}
 }
 

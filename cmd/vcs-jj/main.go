@@ -437,9 +437,12 @@ func jjReword(args []string) error {
 }
 
 func jjCount() error {
-	// Exclude jj's virtual root() commit so the count matches
-	// `git rev-list --count HEAD` on the same history.
-	out, err := capture("jj", "--no-pager", "log", "--no-graph", "-r", "ancestors(@) ~ root()", "-T", `"x"`)
+	// Count from @- (the working copy's parents), not @: jj's
+	// working-copy commit isn't part of the recorded history yet, and
+	// colocated repos keep git HEAD at @-, so this matches
+	// `git rev-list --count HEAD` on the same history. The virtual
+	// root() commit is excluded for the same reason.
+	out, err := capture("jj", "--no-pager", "log", "--no-graph", "-r", "ancestors(@-) ~ root()", "-T", `"x"`)
 	if err != nil {
 		return err
 	}
