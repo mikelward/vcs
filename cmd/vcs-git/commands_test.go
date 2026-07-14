@@ -993,9 +993,14 @@ func TestPrevNext(t *testing.T) {
 	branch := gitOut(t, local, "rev-parse", "--abbrev-ref", "HEAD")
 	// next moved to head (detached); switch back to branch so we're at tip.
 	gitRun(t, local, "checkout", branch)
-	_, err := runDispatch(t, local, "next")
+	out, err := runDispatch(t, local, "next")
 	if err == nil {
 		t.Errorf("next at tip: want error")
+	}
+	// The diagnostic is printed once by runner.PrintError in main, not by
+	// dispatch itself; printing it here too duplicated the message.
+	if strings.Contains(out, "no next commit") {
+		t.Errorf("next at tip printed its own diagnostic (would duplicate PrintError's): %q", out)
 	}
 }
 
