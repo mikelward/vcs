@@ -29,6 +29,7 @@ go.work.sum
 /vcs-git
 /vcs-hg
 /vcs-jj
+/vcs-p4
 
 # VCS detection cache
 .vcs_cache
