@@ -128,7 +128,7 @@ func dispatch(subcmd string, args []string) error {
 		return gitMap(args)
 	case "mergetool", "resolve":
 		return git("mergetool", args...)
-	case "move", "rename":
+	case "move", "rename", "mv":
 		return git("mv", args...)
 	case "next":
 		return gitNext()

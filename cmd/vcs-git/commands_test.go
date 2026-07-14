@@ -938,6 +938,20 @@ func TestMoveAndRm(t *testing.T) {
 	}
 	gitRun(t, local, "commit", "-m", "mv test")
 
+	// mv is an alias for move (parity with vcs-hg and vcs-jj).
+	writeFile(t, local, "v1.txt", "x")
+	gitRun(t, local, "add", "v1.txt")
+	gitRun(t, local, "commit", "-m", "add v1")
+	if _, err := runDispatch(t, local, "mv", "v1.txt", "v2.txt"); err != nil {
+		t.Fatalf("mv: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(local, "v2.txt")); err != nil {
+		t.Errorf("mv target missing")
+	}
+	if _, err := os.Stat(filepath.Join(local, "v1.txt")); err == nil {
+		t.Errorf("mv source still present")
+	}
+
 	writeFile(t, local, "x1.txt", "x")
 	gitRun(t, local, "add", "x1.txt")
 	gitRun(t, local, "commit", "-m", "add x1")

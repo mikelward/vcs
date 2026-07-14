@@ -31,6 +31,27 @@ func TestDispatchDryRun(t *testing.T) {
 	}
 }
 
+func TestMoveAliases(t *testing.T) {
+	old := runner.DryRun
+	runner.DryRun = true
+	t.Cleanup(func() { runner.DryRun = old })
+
+	// move, rename, and mv all map to p4 move (parity with the other
+	// backends, which accept all three).
+	for _, cmd := range []string{"move", "rename", "mv"} {
+		out, err := captureIO(t, func() error {
+			return dispatch(cmd, []string{"a.txt", "b.txt"})
+		})
+		if err != nil {
+			t.Fatalf("dispatch %s: %v\n%s", cmd, err, out)
+		}
+		want := "+ " + p4Cmd + " move a.txt b.txt"
+		if !strings.Contains(out, want) {
+			t.Errorf("%s dry-run output missing %q; got: %q", cmd, want, out)
+		}
+	}
+}
+
 func TestDiffstatUsesSummaryFlag(t *testing.T) {
 	old := runner.DryRun
 	runner.DryRun = true

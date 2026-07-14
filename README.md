@@ -125,7 +125,7 @@ equivalent. Some commands are no-ops where the concept doesn't apply
 | Command | Description | Git | Hg | Jj | P4 |
 |---------|-------------|-----|----|----|----|
 | `copy` | Copy file (VCS-aware) | `cp` + `git add` | `hg copy` | `cp` | `p4 integrate` / `cp` + `p4 add` |
-| `move` / `rename` | Rename file | `git mv` | `hg rename` | `mv` | `p4 move` |
+| `move` / `rename` / `mv` | Rename file | `git mv` | `hg rename` | `mv` | `p4 move` |
 | `remove` / `rm` | Remove file | `git rm` | `hg remove` | `rm` + `jj file untrack` | `p4 delete` |
 | `restore` | Restore file to committed state | `git checkout --` | `hg revert` | `jj restore` | `p4 revert` |
 | `revert` | Revert all changes | `git reset --hard` | `hg revert` | `jj restore` | `p4 revert` |

@@ -164,7 +164,7 @@ func dispatch(subcmd string, args []string) error {
 		return p4Map(args)
 	case "mergetool", "resolve":
 		return p4(append([]string{"resolve"}, args...)...)
-	case "move", "rename":
+	case "move", "rename", "mv":
 		return p4(append([]string{"move"}, args...)...)
 	case "next", "prev":
 		return fmt.Errorf("%s not supported in Perforce", subcmd)
