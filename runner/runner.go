@@ -35,7 +35,8 @@ func Run(name string, args ...string) error {
 }
 
 // Exec replaces the current process with the given command (unix exec).
-// Falls back to Run on systems where exec isn't available.
+// On success it never returns; it returns an error only if the command
+// cannot be found or the exec itself fails.
 //
 // In dry-run mode, it prints the command to stderr and returns nil without
 // executing.
