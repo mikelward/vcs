@@ -15,6 +15,7 @@ func TestSplitGitArgs(t *testing.T) {
 		wantFlags    []string
 		wantFiles    []string
 		wantDashdash bool
+		wantErr      bool
 	}{
 		{
 			name:      "no args",
@@ -66,11 +67,27 @@ func TestSplitGitArgs(t *testing.T) {
 			wantFlags: []string{"-C", "abc123", "-v"},
 			wantFiles: nil,
 		},
+		{
+			name:    "trailing -m with no value",
+			args:    []string{"-m"},
+			wantErr: true,
+		},
+		{
+			name:    "trailing -F with no value after other flags",
+			args:    []string{"-a", "-F"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotFlags, gotFiles, gotDashdash := splitGitArgs(tt.args)
+			gotFlags, gotFiles, gotDashdash, gotErr := splitGitArgs(tt.args)
+			if (gotErr != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", gotErr, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
 			if !reflect.DeepEqual(gotFlags, tt.wantFlags) {
 				t.Errorf("flags = %v, want %v", gotFlags, tt.wantFlags)
 			}
