@@ -213,8 +213,10 @@ func capture(name string, args ...string) (string, error) {
 // splitGitArgs splits args into flags and positional args,
 // handling -m/-C/-c/-F/-t which take a value. A bare "--" separator is
 // reported via dashdash rather than kept in flags so callers can inject
-// flags of their own (e.g. --all) after the user's flags.
-func splitGitArgs(args []string) (flags []string, files []string, dashdash bool) {
+// flags of their own (e.g. --all) after the user's flags. A value-taking
+// flag with no value is an error: silently accepting a trailing -m would
+// let a later injected flag (e.g. --all) become the commit message.
+func splitGitArgs(args []string) (flags []string, files []string, dashdash bool, err error) {
 	i := 0
 	for i < len(args) {
 		a := args[i]
@@ -226,11 +228,11 @@ func splitGitArgs(args []string) (flags []string, files []string, dashdash bool)
 		}
 		switch a {
 		case "-m", "-C", "-c", "-F", "-t":
-			flags = append(flags, a)
-			i++
-			if i < len(args) {
-				flags = append(flags, args[i])
+			if i+1 >= len(args) {
+				return nil, nil, false, fmt.Errorf("%s requires an argument", a)
 			}
+			flags = append(flags, a, args[i+1])
+			i++
 		default:
 			if len(a) > 0 && a[0] == '-' {
 				flags = append(flags, a)
@@ -271,7 +273,10 @@ func gitCommit(args []string) error {
 }
 
 func gitCommitArgs(base []string, args []string) error {
-	flags, files, dashdash := splitGitArgs(args)
+	flags, files, dashdash, err := splitGitArgs(args)
+	if err != nil {
+		return err
+	}
 	if len(files) == 0 {
 		flags = append(flags, "--all")
 	}

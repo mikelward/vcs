@@ -502,6 +502,27 @@ func TestCommit(t *testing.T) {
 	}
 }
 
+func TestCommitMessageFlagMissingValue(t *testing.T) {
+	_, local := newGitRepo(t)
+
+	// A trailing -m with no value must error out rather than commit with
+	// the injected --all as the literal commit message.
+	writeFile(t, local, "m.txt", "x")
+	gitRun(t, local, "add", "m.txt")
+	before := gitOut(t, local, "rev-list", "--count", "HEAD")
+
+	out, err := runDispatch(t, local, "commit", "-m")
+	if err == nil {
+		t.Fatalf("commit -m with no value: want error, got output %q", out)
+	}
+	if !strings.Contains(err.Error(), "-m requires an argument") {
+		t.Errorf("error should say '-m requires an argument': %v", err)
+	}
+	if after := gitOut(t, local, "rev-list", "--count", "HEAD"); after != before {
+		t.Errorf("commit -m with no value created a commit: count %s -> %s", before, after)
+	}
+}
+
 func TestCommitTrailingDashdash(t *testing.T) {
 	_, local := newGitRepo(t)
 
