@@ -437,7 +437,9 @@ func jjReword(args []string) error {
 }
 
 func jjCount() error {
-	out, err := capture("jj", "--no-pager", "log", "--no-graph", "-r", "ancestors(@)|@", "-T", "x")
+	// Exclude jj's virtual root() commit so the count matches
+	// `git rev-list --count HEAD` on the same history.
+	out, err := capture("jj", "--no-pager", "log", "--no-graph", "-r", "ancestors(@) ~ root()", "-T", `"x"`)
 	if err != nil {
 		return err
 	}
