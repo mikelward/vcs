@@ -3,6 +3,13 @@ package vcs
 // Commands is the canonical list of all subcommands that every vcs-* backend
 // must handle in its dispatch function, even if the implementation is a no-op
 // or returns "not supported".
+//
+// Coreutils-named aliases (mv, rm) are deliberately NOT listed even though
+// every backend dispatches them: `vcs --list-commands` feeds the README's
+// shell-integration snippet, which defines a shell function per listed
+// command, and a generated mv/rm wrapper would shadow the real /bin/mv and
+// /bin/rm in the user's shell. Their parity is pinned by per-backend tests
+// instead.
 var Commands = []string{
 	"absorb",
 	"add",
@@ -42,7 +49,6 @@ var Commands = []string{
 	"map",
 	"mergetool",
 	"move",
-	"mv",
 	"next",
 	"outgoing",
 	"pending",
@@ -61,7 +67,6 @@ var Commands = []string{
 	"revert",
 	"review",
 	"reword",
-	"rm",
 	"rootdir",
 	"show",
 	"split",
