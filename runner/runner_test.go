@@ -2,6 +2,7 @@ package runner
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -93,6 +94,41 @@ func TestRunNotDryRun(t *testing.T) {
 	if err := Run("true"); err != nil {
 		t.Fatalf("Run(true): %v", err)
 	}
+}
+
+func TestExitCode(t *testing.T) {
+	t.Run("nil is 0", func(t *testing.T) {
+		if got := ExitCode(nil); got != 0 {
+			t.Errorf("ExitCode(nil) = %d, want 0", got)
+		}
+	})
+
+	t.Run("plain error is 1", func(t *testing.T) {
+		if got := ExitCode(errors.New("boom")); got != 1 {
+			t.Errorf("ExitCode(plain error) = %d, want 1", got)
+		}
+	})
+
+	t.Run("exit error keeps its code", func(t *testing.T) {
+		err := exec.Command("sh", "-c", "exit 3").Run()
+		if err == nil {
+			t.Fatal("expected command to fail")
+		}
+		if got := ExitCode(err); got != 3 {
+			t.Errorf("ExitCode(ExitError) = %d, want 3", got)
+		}
+	})
+
+	t.Run("wrapped exit error keeps its code", func(t *testing.T) {
+		err := exec.Command("sh", "-c", "exit 3").Run()
+		if err == nil {
+			t.Fatal("expected command to fail")
+		}
+		wrapped := fmt.Errorf("running sh: %w", err)
+		if got := ExitCode(wrapped); got != 3 {
+			t.Errorf("ExitCode(wrapped ExitError) = %d, want 3", got)
+		}
+	})
 }
 
 func TestPrintError(t *testing.T) {

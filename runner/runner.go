@@ -53,11 +53,14 @@ func Exec(name string, args ...string) error {
 }
 
 // ExitCode returns the exit code from an error, or 1 if unknown.
+// It unwraps with errors.As so wrapped *exec.ExitErrors keep their
+// exit codes.
 func ExitCode(err error) int {
 	if err == nil {
 		return 0
 	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode()
 	}
 	return 1
