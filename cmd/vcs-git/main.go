@@ -442,7 +442,6 @@ func gitNext() error {
 			return runner.Run("git", "checkout", fields[1])
 		}
 	}
-	fmt.Fprintln(os.Stderr, "no next commit")
 	return fmt.Errorf("no next commit")
 }
 
