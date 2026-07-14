@@ -324,6 +324,34 @@ func TestStatus(t *testing.T) {
 }
 
 //
+// count
+//
+
+func TestCount(t *testing.T) {
+	repo := newJJRepo(t)
+
+	// Fresh repo: only the empty working copy; the virtual root() commit
+	// must not be counted.
+	out, err := runDispatch(t, repo, "count")
+	if err != nil {
+		t.Fatalf("count: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(out) != "1" {
+		t.Errorf("count on fresh repo: want 1, got %q", out)
+	}
+
+	writeFile(t, repo, "a.txt", "x\n")
+	jjRun(t, repo, "commit", "-m", "count test commit")
+	out, err = runDispatch(t, repo, "count")
+	if err != nil {
+		t.Fatalf("count: %v\n%s", err, out)
+	}
+	if strings.TrimSpace(out) != "2" {
+		t.Errorf("count after one commit: want 2, got %q", out)
+	}
+}
+
+//
 // show / diffstat / addremove / drop
 //
 
