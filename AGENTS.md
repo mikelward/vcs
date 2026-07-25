@@ -92,6 +92,9 @@ make clean  # remove built binaries
 - **Workflow.** `<agent>/<short-topic>` branch off `origin/main` → PR → merge
   via rebase or squash. One topic per branch. Follow-up work after a merge
   goes on a new branch. Never commit to `main` / `master`.
+- **Use `git worktree` when it's available.** Give each branch its own
+  worktree instead of switching branches in place, so work in progress on one
+  branch isn't disturbed by work on another.
 - **One commit per logical surviving change.** Rewrite unmerged commits
   freely (squash, amend, reorder, split). Review-fix noise shouldn't survive
   into `main`.
@@ -106,6 +109,10 @@ make clean  # remove built binaries
 
 ## Pull requests and reviews
 
+- **"Drive to merge"** is shorthand for the whole loop: open the PR, send it
+  for Codex review, address every review comment — fix it if you agree, reply
+  on the thread saying why if you don't — and merge once CI is green and Codex
+  has left its thumbs up.
 - Open PRs ready for review (not draft) unless asked otherwise.
 - When a feature has multiple open PRs, list **every** open PR by URL,
   one per line — the "View PR" chip sticks to the first link and hides
