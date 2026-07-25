@@ -71,6 +71,16 @@ make clean  # remove built binaries
 3. Update the command table in `README.md`.
 4. Run `make test` to verify.
 
+## Asking questions
+
+- **Ask in chat, never with `AskUserQuestion`.** That's Claude Code's
+  multiple-choice question prompt, and it's broken in the Claude mobile app —
+  a question asked through it may be unanswerable. Plain chat also keeps the
+  question, its context, and the answer in one readable thread.
+- **After asking, stop and wait for the answer.** Don't proceed on an assumed
+  answer, pick a "recommended" option yourself, or keep working on the part
+  the question affects.
+
 ## Branching
 
 - **Branch naming.** Feature branches are prefixed with the agent's own
