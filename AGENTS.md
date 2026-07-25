@@ -71,6 +71,19 @@ make clean  # remove built binaries
 3. Update the command table in `README.md`.
 4. Run `make test` to verify.
 
+## Talking to the user
+
+- **One question at a time.** Never stack multiple questions in a single turn —
+  ask the most important one, wait for the answer, then ask the next if you
+  still need it. A wall of bundled questions is harder to answer than a short
+  back-and-forth.
+- **Don't interrupt.** Never fire off a question while the user is still
+  typing. Let them finish; a half-typed message isn't an invitation to jump in.
+- **Keep replies short — don't dump a full page.** Lead with the single most
+  important point and stop. If there's more, say the first point and ask
+  whether they're ready for the next one rather than emptying everything at
+  once.
+
 ## Asking questions
 
 - **Ask in chat, never with `AskUserQuestion`.** That's Claude Code's
@@ -80,6 +93,40 @@ make clean  # remove built binaries
 - **After asking, stop and wait for the answer.** Don't proceed on an assumed
   answer, pick a "recommended" option yourself, or keep working on the part
   the question affects.
+
+## Error handling
+
+- **Don't silently swallow errors.** `_ = err`, a bare `if err != nil {}`, or
+  a `recover()` that discards what it caught hides real failures and burns
+  hours when something eventually breaks. Every error path needs to do three
+  things: **report** the error with enough context to identify the failed call
+  (wrap it — `fmt.Errorf("detecting vcs in %s: %w", dir, err)` — so the chain
+  survives), but **sanitized context only**: a remote URL can carry a token and
+  a path can carry the user's name, so redact or shorten those rather than
+  interpolating them raw — the *Privacy* rule applies to error text and logs
+  too; **clean up** what the call acquired (`defer` the
+  close / cancel / temp-dir removal); and **handle the case explicitly** —
+  pick what the caller sees (a sentinel error, a zero value, a non-zero exit)
+  rather than letting control fall through. This tool shells out constantly,
+  so the common case is a subprocess that exits non-zero: distinguish "not a
+  repo / subcommand unsupported here" (a legitimate fallback) from "the VCS
+  binary failed" (an error the user must see) instead of collapsing both into
+  a silent fallback. If you genuinely want to ignore a specific failure, name
+  the reason in a one-line comment and keep it traceable.
+
+## Privacy
+
+- **Never put user data in any artifact that leaves this machine.** That
+  includes commit subjects and bodies, PR titles / descriptions / comments,
+  review replies, issue text, branch names, code comments, test fixtures, and
+  anything else that ends up on GitHub. For a VCS wrapper that means: absolute
+  paths containing the user's home directory or real name, private repository
+  names and remote URLs, hostnames, commit messages copied out of a private
+  repo, and any credential or token that shows up in a remote URL. Use generic
+  placeholders (`/home/user/project`, `git@example.com:org/repo.git`) in
+  examples, fixtures, and reproductions. If a user-supplied bug report contains
+  any of it, paraphrase in the commit / PR — don't quote verbatim. When in
+  doubt, ask before pushing.
 
 ## Branching
 
@@ -104,6 +151,11 @@ make clean  # remove built binaries
 - **Merge cue (`merged` / `I merged` / `landed` / merge webhook) runs hygiene
   *before* engaging with the rest of the message:** `git fetch origin`, cut
   a fresh `<agent>/<short-topic>` branch off `origin/main`, announce the switch.
+- **Unshallow before answering anything that depends on git history depth.**
+  The sandbox clones shallow, so `git rev-list --count`, `git log` past the
+  shallow boundary, and blame return wrong answers without warning. If
+  `git rev-parse --is-shallow-repository` says `true`, run
+  `git fetch --unshallow` first. Don't quote a count off a shallow clone.
 - End every reply with the open-PR link (or `.../compare/main...<branch>`
   until a PR exists). Never link to a closed or merged PR.
 
@@ -117,12 +169,38 @@ make clean  # remove built binaries
 - When a feature has multiple open PRs, list **every** open PR by URL,
   one per line — the "View PR" chip sticks to the first link and hides
   the rest (anthropics/claude-code#46625).
-- Watch the review for automated findings and any comments, and proactively
-  address them.
+- **Codex is the automated reviewer on this repo** — not Copilot. Its reviews
+  are triggered automatically; you don't request them.
+- **Address Codex comments automatically — don't wait to be asked.** Read each
+  one, decide whether it's a real issue or a false positive, and if it's real,
+  fix it in the same PR. Fold the fix into the commit it belongs to (rebase /
+  `--fixup`) rather than tacking on an "address review" commit, per the
+  one-commit-per-logical-change rule. Group several small fixes into one
+  commit when they share a topic.
+- **Reply to (and resolve) every addressed comment**, one thread at a time,
+  not in bulk. `resolve_review_thread` works — pass the `PRRT_*` thread node
+  ID from `pull_request_read` / `get_review_comments` (`review_threads[].id`)
+  as `threadId`. A comment's `PRRC_*` node ID fails; they're different
+  objects. Order of operations: push the fix commit first, then reply citing
+  the new sha, then resolve.
+- **Report when Codex finishes reviewing a fresh push** — a one-liner naming
+  the SHA and comment count, e.g. `Codex reviewed 87d9f02 — 0 comments`. Tie
+  it to the *latest* pushed SHA so a stale review of a superseded commit isn't
+  conflated with the current state.
 - Never leave a review comment thread silently dismissed. Either reply on
   the thread *or* resolve it. When you think a comment is a false positive,
   say *why* on the thread (one or two sentences). Acknowledgement noise
   is fine and preferred over silence.
+- **Skip echo events silently.** `mcp__github__add_reply_to_pull_request_comment`
+  / `add_issue_comment` post under whichever GitHub identity backs the MCP
+  auth, so a moment after you post a reply the same body comes back as a
+  webhook event authored by that identity. That's your own echo, not user
+  feedback — continue without a chat-side acknowledgement. The test is "did
+  *I* just post this body?", not "who is the author?".
+- **Keep watching merged PRs for late review comments.** Reviewers and bots
+  routinely comment *after* merge. Stay subscribed and handle each new comment
+  per the reply-or-resolve rule. Stop once every comment posted on or after the
+  merge commit has been answered, or after ~24h of silence.
 
 ## Cost and reliability
 
