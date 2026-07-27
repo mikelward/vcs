@@ -130,6 +130,9 @@ make clean  # remove built binaries
 
 ## Branching
 
+- **These rules assume an `origin` remote.** Without one you can't fetch,
+  branch from `origin/main`, push, or open a PR — say so and stop rather than
+  improvising a local substitute.
 - **Branch naming.** Feature branches are prefixed with the agent's own
   short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code,
   `codex/...` for Codex, `cursor/...` for Cursor, etc.). Human contributors
@@ -155,16 +158,19 @@ make clean  # remove built binaries
   The sandbox clones shallow, so `git rev-list --count`, `git log` past the
   shallow boundary, and blame return wrong answers without warning. If
   `git rev-parse --is-shallow-repository` says `true`, run
-  `git fetch --unshallow` first. Don't quote a count off a shallow clone.
+  `git fetch --unshallow` first, then re-check — it exits 0 even when
+  it deepened nothing, so if `--is-shallow-repository` is still `true`, say the
+  history is truncated instead of quoting a count.
 - End every reply with the open-PR link (or `.../compare/main...<branch>`
-  until a PR exists). Never link to a closed or merged PR.
+  until a PR exists). Never link to a closed or merged PR — except when the
+  reply *is* post-merge follow-up on that PR, where linking it is correct.
 
 ## Pull requests and reviews
 
-- **"Drive to merge"** is shorthand for the whole loop: open the PR, send it
-  for Codex review, address every review comment — fix it if you agree, reply
-  on the thread saying why if you don't — and merge once CI is green and Codex
-  has left its thumbs up.
+- **"Drive to merge"** is shorthand for the whole loop: open the PR, wait for
+  the automatic Codex review, address every review comment — fix it if you
+  agree, reply on the thread saying why if you don't — and merge once CI is
+  green and Codex has left its thumbs up.
 - Open PRs ready for review (not draft) unless asked otherwise.
 - **On every push, update the PR title and body** so they describe the full,
   latest state of the branch — not the scope it had when it was opened.
@@ -192,6 +198,8 @@ make clean  # remove built binaries
   the SHA and comment count, e.g. `Codex reviewed 87d9f02 — 0 comments`. Tie
   it to the *latest* pushed SHA so a stale review of a superseded commit isn't
   conflated with the current state.
+- **Judge every review comment on merit, whoever wrote it.** Verify the claim
+  before acting; if it doesn't hold up, reply saying why and decline.
 - Never leave a review comment thread silently dismissed. Either reply on
   the thread *or* resolve it. When you think a comment is a false positive,
   say *why* on the thread (one or two sentences). Acknowledgement noise
@@ -206,6 +214,23 @@ make clean  # remove built binaries
   routinely comment *after* merge. Stay subscribed and handle each new comment
   per the reply-or-resolve rule. Stop once every comment posted on or after the
   merge commit has been answered, or after ~24h of silence.
+
+## Language and spelling
+
+- Use **US English** everywhere people read English: command output and help
+  text, commit subjects and bodies, PR titles and descriptions, comments,
+  docs (`README.md`, `SPEC.md`), and identifiers — `color` not `colour`,
+  `behavior` not `behaviour`, `canceled` not `cancelled`, `gray` not `grey`.
+  Underlying VCS spellings stay as those tools spell them.
+
+## CI
+
+- **Report significant CI timing regressions.** After CI finishes on a push,
+  compare against recent runs of the same job on the same kind of ref. Only
+  call out significant slowdowns (rule of thumb: >25% or >30s on a job under
+  ~5min) — don't narrate routine wobble. Name the likely cause: a new
+  dependency, a slow new test, cache invalidation. Compare like with like —
+  PR against PR, `main` against `main`.
 
 ## Cost and reliability
 
