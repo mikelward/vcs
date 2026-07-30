@@ -1,9 +1,11 @@
 package promptinfo
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -499,10 +501,216 @@ func TestGetBranchGitWorktree(t *testing.T) {
 	runGit(t, main, "worktree", "add", wtDir, "feature")
 
 	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: wtDir}
-	got := getBranch(info)
+	got, err := getBranch(info)
+	if err != nil {
+		t.Fatalf("getBranch() error: %v", err)
+	}
 	if got != "feature" {
 		t.Errorf("getBranch() in worktree = %q, want %q", got, "feature")
 	}
+}
+
+func TestParseGitHEAD(t *testing.T) {
+	tests := []struct {
+		name       string
+		head       string
+		wantBranch string
+		wantStub   bool
+	}{
+		{"branch", "ref: refs/heads/main\n", "main", false},
+		{"branch with slashes", "ref: refs/heads/claude/topic\n", "claude/topic", false},
+		{"no trailing newline", "ref: refs/heads/main", "main", false},
+		{"detached", "0123456789abcdef0123456789abcdef01234567\n", "", false},
+		{"reftable stub", "ref: refs/heads/.invalid\n", "", true},
+		{"reftable stub no newline", "ref: refs/heads/.invalid", "", true},
+		{"empty", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			branch, stub := parseGitHEAD(tt.head)
+			if branch != tt.wantBranch || stub != tt.wantStub {
+				t.Errorf("parseGitHEAD(%q) = (%q, %v), want (%q, %v)",
+					tt.head, branch, stub, tt.wantBranch, tt.wantStub)
+			}
+		})
+	}
+}
+
+// A reftable repo's HEAD file is a permanent placeholder pointing at
+// refs/heads/.invalid, so reading it as a branch name used to put ".invalid"
+// in the prompt.
+func TestGetBranchGitReftable(t *testing.T) {
+	dir := initReftableRepo(t)
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: dir}
+	got, err := getBranch(info)
+	if err != nil {
+		t.Fatalf("getBranch() error: %v", err)
+	}
+	if got != "main" {
+		t.Errorf("getBranch() in reftable repo = %q, want %q", got, "main")
+	}
+}
+
+func TestGetBranchGitReftableDetached(t *testing.T) {
+	dir := initReftableRepo(t)
+	runGit(t, dir, "checkout", "--detach")
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: dir}
+	got, err := getBranch(info)
+	if err != nil {
+		t.Fatalf("getBranch() error: %v", err)
+	}
+	if got != "" {
+		t.Errorf("getBranch() detached in reftable repo = %q, want empty", got)
+	}
+}
+
+// `git symbolic-ref --short` shortens only as far as stays unambiguous, so a
+// tag sharing the branch's leaf name makes it answer "heads/main".
+func TestGetBranchGitReftableAmbiguousLeafName(t *testing.T) {
+	dir := initReftableRepo(t)
+	runGit(t, dir, "tag", "main")
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: dir}
+	got, err := getBranch(info)
+	if err != nil {
+		t.Fatalf("getBranch() error: %v", err)
+	}
+	if got != "main" {
+		t.Errorf("getBranch() with refs/tags/main present = %q, want %q", got, "main")
+	}
+}
+
+// symbolic-ref reads HEAD without resolving it, so it still names the branch
+// before the first commit exists. rev-parse cannot answer here at all, which
+// is why it is only ever the tie-breaker.
+func TestGetBranchGitReftableUnborn(t *testing.T) {
+	dir := initReftableRepo(t, withoutCommit)
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: dir}
+	got, err := getBranch(info)
+	if err != nil {
+		t.Fatalf("getBranch() error: %v", err)
+	}
+	if got != "main" {
+		t.Errorf("getBranch() on an unborn branch = %q, want %q", got, "main")
+	}
+}
+
+// A git that cannot open the repository at all (exit 128) is a real failure,
+// not a detached HEAD, and must not be reported as "no branch".
+func TestGatherBranchGitFailurePropagates(t *testing.T) {
+	dir := initReftableRepo(t)
+	shimGit(t, 128, 128, "fatal: detected dubious ownership in repository")
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: dir}
+	_, err := Gather(info, map[string]bool{"branch": true}, nil)
+	if err == nil {
+		t.Fatal("Gather() succeeded; want an error when git exits 128")
+	}
+	// The user needs git's own diagnostic, not just "exit status 128".
+	if !strings.Contains(err.Error(), "dubious ownership") {
+		t.Errorf("Gather() error = %v; want it to carry git's stderr", err)
+	}
+}
+
+// symbolic-ref exits 1 and rev-parse resolves: a genuinely detached HEAD,
+// which is a branch-less prompt rather than an error.
+func TestGatherBranchDetachedIsNotAnError(t *testing.T) {
+	dir := initReftableRepo(t)
+	shimGit(t, 1, 0, "")
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: dir}
+	result, err := Gather(info, map[string]bool{"branch": true}, nil)
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+	if result.Branch != "" {
+		t.Errorf("Branch = %q, want empty", result.Branch)
+	}
+}
+
+// symbolic-ref exits 1 because the ref store is unreadable, not because HEAD
+// is detached — rev-parse fails too. That is a broken repository, and hiding
+// it behind an empty branch would make it look like an ordinary checkout.
+func TestGatherBranchUnreadableRefStoreIsAnError(t *testing.T) {
+	dir := initReftableRepo(t)
+	shimGit(t, 1, 128, "fatal: unable to read ref storage")
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: dir}
+	_, err := Gather(info, map[string]bool{"branch": true}, nil)
+	if err == nil {
+		t.Fatal("Gather() succeeded; want an error when the ref store is unreadable")
+	}
+	if !strings.Contains(err.Error(), "unable to read ref storage") {
+		t.Errorf("Gather() error = %v; want it to carry git's stderr", err)
+	}
+}
+
+// shimGit puts a fake git earlier in PATH so the exit-status handling can be
+// tested without arranging real git failures. symbolicRef and revParse are the
+// exit codes those two subcommands return; msg goes to stderr when one fails.
+// Call it after any real git setup.
+func shimGit(t *testing.T, symbolicRef, revParse int, msg string) {
+	t.Helper()
+	dir := t.TempDir()
+	// rev-parse echoes the bare "HEAD" that real git prints for a detached
+	// HEAD; only its exit status is consulted.
+	script := fmt.Sprintf(`#!/bin/sh
+case " $* " in
+*" symbolic-ref "*) code=%d ;;
+*" rev-parse "*)    code=%d; echo HEAD ;;
+*)                  code=0 ;;
+esac
+if [ "$code" -ne 0 ]; then printf '%%s\n' %q >&2; fi
+exit "$code"
+`, symbolicRef, revParse, msg)
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatalf("writing git shim: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// withoutCommit leaves a repo created by initReftableRepo on an unborn
+// branch, with HEAD naming a branch that has no commit yet.
+func withoutCommit(o *reftableRepoOptions) { o.commit = false }
+
+type reftableRepoOptions struct{ commit bool }
+
+// initReftableRepo creates a repo using git's reftable ref backend, skipping
+// the test when the installed git is too old to support it (pre-2.45).
+func initReftableRepo(t *testing.T, opts ...func(*reftableRepoOptions)) string {
+	t.Helper()
+	o := reftableRepoOptions{commit: true}
+	for _, apply := range opts {
+		apply(&o)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	tmp := t.TempDir()
+	cmd := exec.Command("git", "-C", tmp, "init", "--ref-format=reftable", "-b", "main")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("git does not support --ref-format=reftable: %v\n%s", err, out)
+	}
+
+	// Guard against a future git that accepts the flag but stops writing the
+	// placeholder: without it in HEAD there is nothing to regress on.
+	data, err := os.ReadFile(filepath.Join(tmp, ".git", "HEAD"))
+	if err != nil {
+		t.Fatalf("reading reftable HEAD: %v", err)
+	}
+	if _, stub := parseGitHEAD(string(data)); !stub {
+		t.Skipf("reftable HEAD is not the expected placeholder: %q", data)
+	}
+
+	runGit(t, tmp, "config", "commit.gpgsign", "false")
+	if o.commit {
+		runGit(t, tmp, "commit", "--allow-empty", "--no-verify", "-m", "initial commit")
+	}
+	return tmp
 }
 
 func TestFetchHeadPathGitWorktree(t *testing.T) {

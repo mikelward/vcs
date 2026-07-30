@@ -5,6 +5,8 @@
 package promptinfo
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,11 +89,17 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 		}
 	}
 
+	// Held until the status goroutine has been waited on, so a branch failure
+	// never abandons a running subprocess.
+	var branchErr error
 	if fields["branch"] {
-		r.Branch = getBranch(info)
+		r.Branch, branchErr = getBranch(info)
 	}
 
 	wg.Wait()
+	if branchErr != nil {
+		return nil, branchErr
+	}
 	if fields["status"] {
 		r.Status = sbStatus
 	}
@@ -147,29 +155,117 @@ func gitResolveFile(rootDir, file string) string {
 	return resolved
 }
 
-func getBranch(info *vcsdetect.Info) string {
+// reftableStubBranch is the branch name git writes into the HEAD file of a
+// repository using the reftable ref backend. Real refs live in
+// <gitdir>/reftable/, but git still writes a HEAD file so that tools which
+// only look for one keep recognizing the directory as a repository — and it
+// deliberately points at an unusable name, since a leading "." makes it
+// invalid as a real branch. Reading it as a branch yields ".invalid".
+const reftableStubBranch = ".invalid"
+
+// parseGitHEAD extracts the branch name from the contents of a git HEAD file.
+// branch is empty for a detached HEAD (the file holds a raw object ID). stub
+// reports that HEAD is the reftable placeholder and carries no branch at all,
+// so the caller must ask git rather than trusting the file.
+func parseGitHEAD(head string) (branch string, stub bool) {
+	ref, ok := strings.CutPrefix(strings.TrimSpace(head), "ref: refs/heads/")
+	if !ok {
+		return "", false // detached HEAD
+	}
+	if ref == reftableStubBranch {
+		return "", true
+	}
+	return ref, false
+}
+
+// gitHeadBranch asks git for the branch HEAD points at, for repositories
+// whose HEAD file cannot be read directly (reftable). It returns "" with no
+// error for a detached HEAD, and an error whenever git could not answer.
+//
+// symbolic-ref reads HEAD without resolving it, which is what makes it the
+// right question here: it still reports the branch of a repository whose
+// first commit does not exist yet, where rev-parse fails outright. It is
+// asked for the full ref rather than --short, which shortens only as far as
+// stays unambiguous: alongside a refs/tags/main, --short answers "heads/main".
+func gitHeadBranch(rootDir string) (string, error) {
+	out, err := gitCapture(rootDir, "symbolic-ref", "--quiet", "HEAD")
+	if err == nil {
+		branch, ok := strings.CutPrefix(strings.TrimSpace(string(out)), "refs/heads/")
+		if !ok {
+			return "", nil // HEAD points outside refs/heads/: no branch to show
+		}
+		return branch, nil
+	}
+
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		return "", gitError("symbolic-ref", rootDir, err)
+	}
+
+	// --quiet folds two very different things into exit 1: a detached HEAD,
+	// and a ref store git could not read. Only a second question separates
+	// them — rev-parse resolves a detached HEAD to the bare name "HEAD" and
+	// fails outright when the store is unreadable. This costs an extra fork,
+	// but only on a path the common case never reaches.
+	if _, rerr := gitCapture(rootDir, "rev-parse", "--symbolic-full-name", "HEAD"); rerr != nil {
+		return "", gitError("rev-parse", rootDir, rerr)
+	}
+	return "", nil // genuinely detached
+}
+
+func gitCapture(rootDir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", append([]string{"-C", rootDir}, args...)...)
+	cmd.Env = runner.CleanGitEnv()
+	return cmd.Output()
+}
+
+// gitError names the failed call and the project directory — not the full
+// path, since this text can reach a log. git's own stderr carries the
+// actionable detail, such as the command that clears a safe.directory refusal.
+func gitError(subcommand, rootDir string, err error) error {
+	return fmt.Errorf("git %s in %s: %w%s",
+		subcommand, filepath.Base(rootDir), err, gitStderr(err))
+}
+
+// gitStderr renders git's own diagnostic from a failed exec, so that the
+// reason — say a safe.directory refusal, along with the command that fixes
+// it — reaches the user rather than just "exit status 128".
+func gitStderr(err error) string {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if msg := strings.TrimSpace(string(exit.Stderr)); msg != "" {
+			return ": " + msg
+		}
+	}
+	return ""
+}
+
+func getBranch(info *vcsdetect.Info) (string, error) {
 	switch info.VCS {
 	case "git":
 		// Read HEAD directly to avoid forking. gitResolveFile handles worktrees.
 		data, err := os.ReadFile(gitResolveFile(info.RootDir, "HEAD"))
 		if err != nil {
-			return ""
+			// Not a readable git dir; the prompt renders without a branch
+			// rather than failing, as it has to for the hg and jj cases too.
+			return "", nil
 		}
-		head := strings.TrimSpace(string(data))
-		if strings.HasPrefix(head, "ref: refs/heads/") {
-			return strings.TrimPrefix(head, "ref: refs/heads/")
+		branch, stub := parseGitHEAD(string(data))
+		if stub {
+			// reftable repo: the HEAD file is a placeholder, ask git.
+			return gitHeadBranch(info.RootDir)
 		}
-		return "" // detached HEAD
+		return branch, nil
 	case "hg":
 		// Read .hg/branch directly to avoid forking.
 		data, err := os.ReadFile(filepath.Join(info.RootDir, ".hg", "branch"))
 		if err != nil {
-			return "default" // hg default when file doesn't exist
+			return "default", nil // hg default when file doesn't exist
 		}
-		return strings.TrimSpace(string(data))
+		return strings.TrimSpace(string(data)), nil
 	}
 	// jj: always empty
-	return ""
+	return "", nil
 }
 
 // getStatusAndBehind runs the VCS status/behind probes and returns:

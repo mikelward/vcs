@@ -201,6 +201,16 @@ pull/sync operation — read from `jj op log` — is older than the staleness
 threshold, so the prompt nags about a drifting checkout rather than on
 every prompt.
 
+The `branch` field is read straight from the git `HEAD` file rather than by
+running git. Repositories using a non-default ref backend (`reftable`) are the
+exception: there `HEAD` is only a placeholder pointing at the deliberately
+unusable `refs/heads/.invalid`, kept so that tools looking for a `HEAD` file
+still recognize the directory as a repository. Those repos cost one
+`git symbolic-ref` fork to read the real branch, plus a second `git rev-parse`
+fork on the one ambiguous answer: `symbolic-ref --quiet` reports both a
+detached `HEAD` and an unreadable ref store as exit 1, and only `rev-parse`
+separates the branch-less checkout from the broken repository.
+
 ## Hosting Detection
 
 Hosting platform is detected by parsing the git remote `origin` URL from
