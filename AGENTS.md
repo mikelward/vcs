@@ -101,10 +101,7 @@ make clean  # remove built binaries
   hours when something eventually breaks. Every error path needs to do three
   things: **report** the error with enough context to identify the failed call
   (wrap it — `fmt.Errorf("detecting vcs in %s: %w", dir, err)` — so the chain
-  survives), but **sanitized context only**: a remote URL can carry a token and
-  a path can carry the user's name, so redact or shorten those rather than
-  interpolating them raw — the *Privacy* rule applies to error text and logs
-  too; **clean up** what the call acquired (`defer` the
+  survives); **clean up** what the call acquired (`defer` the
   close / cancel / temp-dir removal); and **handle the case explicitly** —
   pick what the caller sees (a sentinel error, a zero value, a non-zero exit)
   rather than letting control fall through. This tool shells out constantly,
@@ -127,6 +124,12 @@ make clean  # remove built binaries
   examples, fixtures, and reproductions. If a user-supplied bug report contains
   any of it, paraphrase in the commit / PR — don't quote verbatim. When in
   doubt, ask before pushing.
+- **Command output is not one of those artifacts.** Diagnostics, error text and
+  progress lines print on the user's own terminal, and naming the repository,
+  path or remote is usually the point of the message. Redact only secrets:
+  tokens, keys, and passwords embedded in remote URLs. Quoting that output into
+  a commit, PR, issue, or fixture republishes it, and the bullet above governs
+  again — paraphrase or use a placeholder there.
 
 ## Branching
 
