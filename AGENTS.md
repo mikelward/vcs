@@ -132,7 +132,10 @@ make clean  # remove built binaries
 
 - **These rules assume an `origin` remote.** Without one you can't fetch,
   branch from `origin/main`, push, or open a PR — say so and stop rather than
-  improvising a local substitute.
+  improvising a local substitute. **Exception:** sandboxes that intentionally
+  provide no remote Git support (such as Codex cloud) may continue on the
+  pre-created working branch without fetching `origin`; commit the finished
+  work locally and use the sandbox's PR handoff mechanism if one is available.
 - **Branch naming.** Feature branches are prefixed with the agent's own
   short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code,
   `codex/...` for Codex, `cursor/...` for Cursor, etc.). Human contributors
