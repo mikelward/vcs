@@ -115,7 +115,7 @@ func TestBuildNoVCSFallback(t *testing.T) {
 	tmp := t.TempDir()
 
 	t.Run("no color", func(t *testing.T) {
-		got := Build(&Options{
+		got, _ := Build(&Options{
 			Hostname: "host",
 			Shpool:   "sess",
 			NoVCS:    true,
@@ -131,7 +131,7 @@ func TestBuildNoVCSFallback(t *testing.T) {
 	})
 
 	t.Run("color", func(t *testing.T) {
-		got := Build(&Options{
+		got, _ := Build(&Options{
 			Hostname: "host",
 			Shpool:   "sess",
 			NoVCS:    true,
@@ -155,7 +155,7 @@ func TestBuildOutsideRepo(t *testing.T) {
 		t.Skipf("tmp %q is inside a %s repo rooted at %s", tmp, info.VCS, info.RootDir)
 	}
 
-	got := Build(&Options{
+	got, _ := Build(&Options{
 		Hostname: "host",
 		Shpool:   "sess",
 		Cwd:      tmp,
@@ -185,7 +185,7 @@ func TestBuildInsideGitRepo(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	t.Run("no color", func(t *testing.T) {
-		got := Build(&Options{
+		got, _ := Build(&Options{
 			Hostname: "host",
 			Shpool:   "sess",
 			HomeDir:  "/nonexistent",
@@ -205,7 +205,7 @@ func TestBuildInsideGitRepo(t *testing.T) {
 	})
 
 	t.Run("color", func(t *testing.T) {
-		got := Build(&Options{
+		got, _ := Build(&Options{
 			Hostname: "host",
 			Shpool:   "sess",
 			HomeDir:  "/nonexistent",
@@ -224,7 +224,7 @@ func TestBuildInsideGitRepo(t *testing.T) {
 
 func TestBuildAuthWarning(t *testing.T) {
 	tmp := t.TempDir()
-	got := Build(&Options{
+	got, _ := Build(&Options{
 		Hostname: "host",
 		Shpool:   "sess",
 		NoVCS:    true,
@@ -321,6 +321,51 @@ func startFakeAgentRaw(t *testing.T, handle func(net.Conn)) string {
 		}
 	}()
 	return path
+}
+
+// A git that cannot open the repository (exit 128) must not vanish into the
+// plain-directory fallback. prompt-line owns the whole prompt line, so the
+// caller needs both a usable line and the reason the VCS part is missing.
+func TestBuildReportsVCSFailure(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	tmp := initGitRepo(t)
+	// Stand in for a reftable repo: HEAD holds the placeholder, so resolving
+	// the branch has to ask git — which then fails. Using a real files-backend
+	// repo keeps this independent of the installed git's reftable support;
+	// promptinfo covers the genuine reftable case.
+	head := filepath.Join(tmp, ".git", "HEAD")
+	if err := os.WriteFile(head, []byte("ref: refs/heads/.invalid\n"), 0o644); err != nil {
+		t.Fatalf("writing placeholder HEAD: %v", err)
+	}
+
+	shim := t.TempDir()
+	script := "#!/bin/sh\necho 'fatal: detected dubious ownership in repository' >&2\nexit 128\n"
+	if err := os.WriteFile(filepath.Join(shim, "git"), []byte(script), 0o755); err != nil {
+		t.Fatalf("writing git shim: %v", err)
+	}
+	t.Setenv("PATH", shim+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := Build(&Options{
+		Hostname: "host",
+		Shpool:   "sess",
+		Cwd:      tmp,
+		HomeDir:  "/nonexistent",
+		SkipAuth: true,
+		AuthOK:   true,
+	})
+	if err == nil {
+		t.Fatal("Build() error is nil; want the git failure reported")
+	}
+	if !strings.Contains(err.Error(), "dubious ownership") {
+		t.Errorf("Build() error = %v; want it to carry git's stderr", err)
+	}
+	// Reporting the failure must not cost the caller a usable line.
+	if !strings.HasPrefix(got, "host [sess] ") || !strings.Contains(got, tmp) {
+		t.Errorf("Build() = %q, want a usable line falling back to %q", got, tmp)
+	}
 }
 
 // initGitRepo creates a temp git repo with signing disabled and one commit.

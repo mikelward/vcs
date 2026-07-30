@@ -75,15 +75,20 @@ type Options struct {
 // dirPart and authPart both do slow work (VCS status subprocess and SSH
 // agent check respectively); they're run concurrently so the prompt is
 // gated by the slower of the two, not their sum.
-func Build(opts *Options) string {
+//
+// The line is always usable, even alongside a non-nil error: the directory
+// part degrades to the plain path. The error says why the VCS part is
+// missing, for the caller to report rather than drop.
+func Build(opts *Options) (string, error) {
 	host := HostPart(opts.Hostname, opts.Shpool, opts.Production, opts.Color)
 
 	var dir, auth string
+	var dirErr error
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		dir = dirPart(opts)
+		dir, dirErr = dirPart(opts)
 	}()
 	go func() {
 		defer wg.Done()
@@ -95,7 +100,7 @@ func Build(opts *Options) string {
 	if auth != "" {
 		out += " " + auth
 	}
-	return out
+	return out, dirErr
 }
 
 // HostPart formats the hostname + shpool tag. Matches the output of the
@@ -154,12 +159,12 @@ func AuthWarning(label string, color bool) string {
 // outside a repo it prints tilde-expanded cwd. Mirrors shrc's dir_info
 // composition: the whole directory piece is wrapped in blue so uncolored
 // spans (e.g. branch name from promptinfo) inherit the dir color.
-func dirPart(opts *Options) string {
+func dirPart(opts *Options) (string, error) {
 	cwd := opts.Cwd
 	if cwd == "" {
 		c, err := os.Getwd()
 		if err != nil {
-			return ""
+			return "", nil
 		}
 		cwd = c
 	}
@@ -169,7 +174,7 @@ func dirPart(opts *Options) string {
 	}
 
 	if opts.NoVCS {
-		return noVCSFallback(cwd, home, opts.Color)
+		return noVCSFallback(cwd, home, opts.Color), nil
 	}
 
 	info, err := vcsdetect.Detect(cwd)
@@ -182,7 +187,8 @@ func dirPart(opts *Options) string {
 		err = nil
 	}
 	if err != nil || info == nil {
-		return wrapBlue(TildeDirectory(cwd, home), opts.Color)
+		// Not a repo: an ordinary directory, not a failure.
+		return wrapBlue(TildeDirectory(cwd, home), opts.Color), nil
 	}
 
 	format := opts.Format
@@ -192,13 +198,15 @@ func dirPart(opts *Options) string {
 	fields := promptinfo.ParseFields(format)
 	result, perr := promptinfo.Gather(info, fields, &promptinfo.Options{HgPath: opts.HgPath})
 	if perr != nil {
-		return wrapBlue(TildeDirectory(cwd, home), opts.Color)
+		// Distinct from the not-a-repo case above: the VCS itself failed.
+		// Still render a usable directory, but hand back the reason.
+		return wrapBlue(TildeDirectory(cwd, home), opts.Color), perr
 	}
 	out := promptinfo.Format(result, format, opts.Color)
 	if out == "" {
-		return wrapBlue(TildeDirectory(cwd, home), opts.Color)
+		return wrapBlue(TildeDirectory(cwd, home), opts.Color), nil
 	}
-	return wrapBlue(out, opts.Color)
+	return wrapBlue(out, opts.Color), nil
 }
 
 func noVCSFallback(cwd, home string, color bool) string {

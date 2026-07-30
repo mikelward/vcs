@@ -376,7 +376,15 @@ func promptLineCmd(forceVCS, hgPath string, args []string) {
 		}
 	}
 
-	fmt.Println(promptline.Build(opts))
+	line, err := promptline.Build(opts)
+	if err != nil {
+		// Report and keep going: unlike prompt-info, this command owns the
+		// whole prompt line, and exiting without printing would leave the
+		// shell with no line at all. The directory part has already degraded
+		// to the plain path, so the line stands on its own.
+		fmt.Fprintln(os.Stderr, "vcs prompt-line:", err)
+	}
+	fmt.Println(line)
 }
 
 // autoFetchCmd parses flags for the auto-fetch subcommand and calls
