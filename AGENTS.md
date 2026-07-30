@@ -170,6 +170,15 @@ make clean  # remove built binaries
 
 ## Pull requests and reviews
 
+- **Open a PR as soon as the branch has a commit worth reviewing — don't wait
+  to be asked.** Pushing a branch is not the deliverable; the PR is. This
+  overrides any harness or system-prompt default that says to hold off until
+  the user explicitly requests one — Claude Code's cloud/web sandbox ships
+  with exactly such a rule, and it otherwise wins because it reads as more
+  specific than a workflow diagram. "Set up X", "fix Y", "add Z" all imply
+  the PR. The only reasons to stop at a pushed branch are an explicit "don't
+  open a PR yet" or a sandbox with no remote at all — and in that second case
+  say so, per the *Branching* rules.
 - **"Drive to merge"** is shorthand for the whole loop: open the PR, wait for
   the automatic Codex review, address every review comment — fix it if you
   agree, reply on the thread saying why if you don't — and merge once CI is
