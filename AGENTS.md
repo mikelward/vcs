@@ -132,10 +132,17 @@ make clean  # remove built binaries
 
 - **These rules assume an `origin` remote.** Without one you can't fetch,
   branch from `origin/main`, push, or open a PR — say so and stop rather than
-  improvising a local substitute. **Exception:** sandboxes that intentionally
-  provide no remote Git support (such as Codex cloud) may continue on the
-  pre-created working branch without fetching `origin`; commit the finished
-  work locally and use the sandbox's PR handoff mechanism if one is available.
+  improvising a local substitute. **Exception:** in a sandbox that
+  intentionally provides no remote Git support (Codex cloud, say), follow the
+  normal branch rules from the current `HEAD` — a pre-created working branch
+  counts — commit locally, and report that fetch, push, and pull requests are
+  unavailable, using the sandbox's own PR handoff if it has one. That exception
+  outranks every `origin`-dependent step below it — the merge-cue fetch, cutting
+  a branch off `origin/main`, the closing PR link — so work from the current
+  `HEAD` and name what wasn't possible instead of faking it. One limit: a merge
+  cue needs a base that *contains* the merge, and an offline sandbox can't fetch
+  one. Say the follow-up needs a fresh sandbox or a synced checkout rather than
+  branching off a `HEAD` whose commits just landed upstream.
 - **Branch naming.** Feature branches are prefixed with the agent's own
   short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code,
   `codex/...` for Codex, `cursor/...` for Cursor, etc.). Human contributors
@@ -166,7 +173,9 @@ make clean  # remove built binaries
   history is truncated instead of quoting a count.
 - End every reply with the open-PR link (or `.../compare/main...<branch>`
   until a PR exists). Never link to a closed or merged PR — except when the
-  reply *is* post-merge follow-up on that PR, where linking it is correct.
+  reply *is* post-merge follow-up on that PR, where linking it is correct. In an
+  offline sandbox with no `origin` there's no URL to end with — say that, rather
+  than inventing a link that resolves to nothing.
 
 ## Pull requests and reviews
 
