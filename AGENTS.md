@@ -221,60 +221,29 @@ reply, no offer to correct it. It is not a finding.
   owner's standing request for that PR, so a client-level rule reading "open a
   PR only when the user explicitly asks" is already satisfied — the ask is
   here, and it doesn't need repeating per branch.
-- **Opening the PR arms the first scheduled check.** That check *is* the
-  watch: when it fires it reads CI, review comments and the Codex reaction,
-  and it is what catches anything a webhook drops. `subscribe_pr_activity`
-  is a separate thing and it is **opt-in** — it pushes every comment, check
-  run and bot reply into the conversation as a raw event, which buries the
-  thread the user is actually reading under machine chatter they didn't ask
-  for. Subscribe only when asked to, and unsubscribe as soon as the reason
-  for it passes.
+- **Stay subscribed for the life of the PR, and let the subscription be the
+  watch.** Call `subscribe_pr_activity` when you open it — some clients
+  subscribe automatically and some do not, and assuming a watch you do not
+  have is how a review sits unanswered for hours. Once subscribed, reviews,
+  comments and CI failures arrive as events and get handled in the turn they
+  land, which is what the old five-minute polling loop was standing in for.
+  Two things a subscription cannot deliver, and both still need a scheduled
+  check: the transitions whose webhooks get dropped — CI *success*, a new
+  push, a merge conflict appearing, a base branch recovering — and the
+  **absence** of something, since Codex never picking a push up is a
+  non-event and nothing can wake you for it. So while either is outstanding,
+  keep **exactly one** check armed and re-arm it every time it fires; put the
+  first one a few minutes out so "nothing from Codex, nudge once" can
+  actually run, and let the rest be as long as the scheduler will honor.
+  Never end a turn with one of those outstanding and no check armed — that is
+  how an unattended drive waits forever on a green head nothing told it
+  about. Drop the check when nothing is outstanding, and when the pull
+  request merges or closes cancel any pending check *and* unsubscribe — a
+  trigger left armed wakes a turn for a pull request that is already
+  finished.
 - **If a scheduler or GitHub call prompts, say so once and carry on.**
   Permissions load at session start, so writing a settings file mid-session
   can't fix the session you're in.
-- **Poll your own open PRs — every ~5 minutes while CI or the verdict is
-  outstanding, ~30 once only a human is left.** Those two are what nothing
-  else reports. Never end a turn idle with one of yours open: arm the next
-  check with whatever the client offers (`send_later`, a scheduled task /
-  cron, `/loop`), and arm it *without asking* — that is hygiene, not a
-  decision. Someone else's PR is not your polling job unless you're asked.
-  Merged or closed is terminal: take one more check for CI and Codex on the
-  final head, but settle for what's known if a report may never land, then
-  run a last reply-or-resolve pass and cancel the watch in full — the
-  pending trigger, *and* `unsubscribe_pr_activity` if you ever subscribed.
-  Open a follow-up PR, with its own watch, for anything a merged one still
-  needs.
-- **What the polling costs.** Twelve wake-ups an hour per PR at the fast
-  cadence, two at the slow one — each a model turn plus a few GitHub API
-  calls, so roughly a dollar an hour while a PR is waiting on its merge
-  gate. The scheduler is the single point of failure: one missed re-arm ends
-  the watch silently, with no error anywhere. If you can't arm the next
-  check, say so in the reply rather than leaving a PR that looks watched and
-  isn't.
-- **One pending check per PR, settled at the top of the turn.** Two chains
-  each re-arming themselves double the cost every time a webhook starts a
-  turn while one is already pending; parking the re-arm at the *end* of the
-  turn loses it when the turn is interrupted, which once left a PR unwatched
-  for two hours. So settle it first, and settle it to exactly one: leave a
-  correctly-timed check alone — pushing its deadline forward every turn is
-  how a busy PR never gets polled — and when it's missing, already fired, or
-  mis-timed, either `update_trigger` it in place or arm the replacement
-  before deleting the old, because an overlap beats a gap. Then diagnose,
-  fix, and reply.
-- **A `send_later` one-shot re-arms itself +24h**, so "check in 5 minutes"
-  silently becomes daily. Never leave a fired trigger to expire on its own, and
-  check that the fire time it returned is the one you asked for — a five-minute
-  request came back as a hundred once, saying nothing — and re-time it until it
-  is, or say in the reply that the watch is running at the wrong cadence.
-  Reading the wrong answer and accepting it is the same silence.
-- **`list_triggers` spans every session on the account.** Narrow it to this
-  session's `persistent_session_id`, then to the trigger you actually mean (its
-  own id, once the PR its prompt names has narrowed the field), before updating
-  *or* deleting one — an update reschedules whatever it matches as surely as a
-  delete cancels it. If that filter turns up more than one, the extras are
-  duplicate chains: keep one and delete the rest.
-- **Never name a SHA in the check prompt.** It is written before the work it
-  describes, so it is stale when it fires — say "the current head".
 - **"Drive" means run the loop automatically**: pick the next task,
   implement it, open the PR, send it for review, address every comment,
   merge once CI is green and Codex's verdict for the current head is in —
@@ -363,8 +332,6 @@ reply, no offer to correct it. It is not a finding.
   webhook event authored by that identity. That's your own echo, not user
   feedback — continue without a chat-side acknowledgement. The test is "did
   *I* just post this body?", not "who is the author?".
-- **Canceling the watch**: see the polling bullet under **Autonomy**.
-
 ## Language and spelling
 
 - Use **US English** everywhere people read English: command output and help
