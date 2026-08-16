@@ -221,26 +221,30 @@ reply, no offer to correct it. It is not a finding.
   owner's standing request for that PR, so a client-level rule reading "open a
   PR only when the user explicitly asks" is already satisfied — the ask is
   here, and it doesn't need repeating per branch.
-- **Stay subscribed for the life of the PR, and let the subscription be the
-  watch.** Call `subscribe_pr_activity` when you open it — some clients
-  subscribe automatically and some do not, and assuming a watch you do not
-  have is how a review sits unanswered for hours. Once subscribed, reviews,
-  comments and CI failures arrive as events and get handled in the turn they
-  land, which is what the old five-minute polling loop was standing in for.
-  Two things a subscription cannot deliver, and both still need a scheduled
-  check: the transitions whose webhooks get dropped — CI *success*, a new
-  push, a merge conflict appearing, a base branch recovering — and the
-  **absence** of something, since Codex never picking a push up is a
-  non-event and nothing can wake you for it. So while either is outstanding,
-  keep **exactly one** check armed and re-arm it every time it fires; put the
-  first one a few minutes out so "nothing from Codex, nudge once" can
-  actually run, and let the rest be as long as the scheduler will honor.
-  Never end a turn with one of those outstanding and no check armed — that is
-  how an unattended drive waits forever on a green head nothing told it
-  about. Drop the check when nothing is outstanding, and when the pull
-  request merges or closes cancel any pending check *and* unsubscribe — a
-  trigger left armed wakes a turn for a pull request that is already
-  finished.
+- **Watch your own PRs by subscription, plus one scheduled check.** Have a
+  subscription — Claude Code makes one when you open a PR; where a client
+  doesn't, call `subscribe_pr_activity`. It delivers reviews, comments and CI
+  failures. It cannot deliver CI *success*, a push, the merge, Codex's clean
+  verdict (a reaction), or Codex never answering at all — so keep exactly one
+  check armed for as long as the PR is open (each event and each check costs
+  a model turn). Under drive, arm auto-merge at PR open too — but only where
+  the ruleset makes the Codex verdict a required check, since where CI is the
+  only requirement it merges before Codex has answered.
+  - Settle the fired trigger first thing in the turn, not last. It may have
+    silently re-armed rather than retired, so update it rather than adding a
+    second chain.
+  - Check the fire time you got against the one you asked for — a 4-minute
+    request has come back as 64. Re-time it, or say the watch isn't armed.
+  - A few minutes out while CI or the current head's Codex verdict is
+    outstanding; longer once only a human is left; short again after a push.
+  - Name the PR, and say what to re-read rather than what you read. A SHA or
+    a list of which PRs are open goes stale before it fires; one PR number
+    does not, and the trigger has to be matchable to it.
+  - Merged or closed, take one last reply-or-resolve pass — a review can
+    land after the merge — then cancel it and unsubscribe. `list_triggers`
+    spans the account, so match this session and this PR before updating
+    or deleting one; an update reschedules whatever it matches as surely
+    as a delete cancels it.
 - **If a scheduler or GitHub call prompts, say so once and carry on.**
   Permissions load at session start, so writing a settings file mid-session
   can't fix the session you're in.
