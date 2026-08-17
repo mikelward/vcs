@@ -30,6 +30,7 @@ vcs-p4: $(SOURCES)
 test:
 	go test ./...
 	@sh session_start_hook_test.sh
+	@sh workflows_test.sh
 
 install: $(BINARIES)
 	install -d $(PREFIX)/bin
