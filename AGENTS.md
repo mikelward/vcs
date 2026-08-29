@@ -301,11 +301,11 @@ reply, no offer to correct it. It is not a finding.
   you don't — and merge once CI is green and Codex's verdict for the current
   head is in.
 - Open PRs ready for review (not draft) unless asked otherwise.
-- **On every push, update the PR title and body** so they describe the full,
-  latest state of the branch — not the scope it had when it was opened.
-  Re-read the diff against `origin/main` and patch whatever drifted, then
-  post the PR link in the chat reply for that push, not only at the end of
-  the conversation.
+- **Update the PR title and body with the push, not after it** — same step,
+  so they describe the full, latest state of the branch, not the scope it
+  had when it was opened. Re-read the diff against `origin/main` and patch
+  whatever drifted, then post the PR link in the chat reply for that push,
+  not only at the end of the conversation.
 - When a feature has multiple open PRs, list **every** open PR by URL,
   one per line — the "View PR" chip sticks to the first link and hides
   the rest (anthropics/claude-code#46625).
