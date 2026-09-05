@@ -170,9 +170,9 @@ make clean  # remove built binaries
   pick a name that identifies them. The placeholder `<agent>` below stands
   in for whichever prefix you use — don't hard-code `claude/` unless you
   *are* Claude Code.
-- **Workflow.** `<agent>/<short-topic>` branch off `origin/main` → PR → merge
-  via rebase or squash. One topic per branch. Follow-up work after a merge
-  goes on a new branch. Never commit to `main` / `master`.
+- **Workflow.** `<agent>/<short-topic>` branch off `origin/main` → PR →
+  rebase-merge. One topic per branch. Follow-up work after a merge goes on a
+  new branch. Never commit to `main` / `master`.
 - **Use `git worktree` when it's available.** Give each branch its own
   worktree instead of switching branches in place, so work in progress on one
   branch isn't disturbed by work on another.
