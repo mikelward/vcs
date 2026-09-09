@@ -347,8 +347,9 @@ reply, no offer to correct it. It is not a finding.
   a review is the attributable form, naming the commit it read. Findings
   arrive as review comments, as a top-level comment, or as a review — read
   `get_review_comments`, `get_comments` and `get_reviews` to the last page,
-  since all three page oldest first — and they block the merge until fixed
-  or rebutted; an acknowledgement is not an answer. Nothing from Codex since
+  since all three page oldest first — and they block the merge until fixed,
+  rebutted, or deferred (see *Deferring a finding* above); an acknowledgement
+  is not an answer. Nothing from Codex since
   the push, five minutes on, means it never picked it up — comment `@codex
   review`, once.
 - **Judge every review comment on merit, whoever wrote it.** Verify the
