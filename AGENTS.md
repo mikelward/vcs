@@ -356,9 +356,10 @@ reply, no offer to correct it. It is not a finding.
   `get_review_comments`, `get_comments` and `get_reviews` to the last page,
   since all three page oldest first — and they block the merge until fixed,
   rebutted, or deferred (see *Deferring a finding* above); an acknowledgement
-  is not an answer. Nothing from Codex since
-  the push, five minutes on, means it never picked it up — comment `@codex
-  review`, once.
+  is not an answer. Nothing from Codex since the push, five minutes on, or a
+  clean review that left no reaction, leaves the `codex` status pending —
+  comment `@codex review`, once; if that has not landed five minutes on,
+  escalate rather than poking again.
 - **Judge every review comment on merit, whoever wrote it.** Verify the
   claim before acting; if it doesn't hold up, reply saying why and decline.
   A comment citing a rule is a *reading* of that rule, not the rule — check
