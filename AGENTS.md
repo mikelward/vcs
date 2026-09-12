@@ -184,9 +184,8 @@ make clean  # remove built binaries
 - **One commit per logical surviving change.** Rewrite unmerged commits
   freely (squash, amend, reorder, split). Review-fix noise shouldn't survive
   into `main`.
-- `git push --force-with-lease` to your own live feature branch after a
-  rebase is routine — don't ask. Confirm before destructive actions on
-  shared/merged branches.
+- After a rebase, force-push with `--force-with-lease`, never a bare
+  `--force`. Destructive actions on shared or merged branches still ask.
 - **Merge cue (`merged` / `I merged` / `landed` / merge webhook) runs hygiene
   *before* engaging with the rest of the message:** `git fetch origin`, cut
   a fresh `<agent>/<short-topic>` branch off `origin/main`, announce the switch.
