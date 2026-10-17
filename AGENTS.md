@@ -6,6 +6,8 @@ last_modified: 2026-10-17
 
 # Agent Instructions
 
+`CLAUDE.md` and `GEMINI.md` are symlinks to this file. Edit `AGENTS.md`.
+
 Keep this file short and concrete — add a new rule the first time something
 bites, not the third. Every session loads it whole, so each rule costs context
 on every turn: say it once in the fewest words that carry the *why*, rewrite or
@@ -25,6 +27,12 @@ Install the following tools locally before working on this project:
 - **Mercurial (hg)**: Required for testing vcs-hg. Install via `pip install mercurial` or your package manager.
 - **Jujutsu (jj)**: Required for testing vcs-jj. Install from https://github.com/jj-vcs/jj.
 - **chg**: Required for benchmarking. Mercurial's command server client for faster hg operations. Install via your package manager (e.g. `apt install chg`, or build from the Mercurial contrib directory).
+
+In a remote container, `.claude/hooks/session-start.sh` installs hg and jj at
+CI's pinned versions, but it is auto-invoked only in Claude Code; other agents
+run `CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh` themselves.
+Without hg and jj, `go test ./...` still reports ok while the vcs-hg and
+vcs-jj tests skip.
 
 ## Development workflow
 
@@ -178,7 +186,8 @@ make clean  # remove built binaries
   branching off a `HEAD` whose commits just landed upstream.
 - **Branch naming.** Feature branches are prefixed with the agent's own
   short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code,
-  `codex/...` for Codex, `cursor/...` for Cursor, etc.). Human contributors
+  `gemini/...` for Gemini / Antigravity, `codex/...` for Codex, `cursor/...`
+  for Cursor, etc.). Human contributors
   pick a name that identifies them. The placeholder `<agent>` below stands
   in for whichever prefix you use — don't hard-code `claude/` unless you
   *are* Claude Code.
@@ -218,6 +227,11 @@ make clean  # remove built binaries
   **Autonomy**). That's expected either way — never re-author or amend
   already-merged commits to "fix" authorship or signing, and don't narrate it: no note in the
 reply, no offer to correct it. It is not a finding.
+- **No model identifier** — never name the coding agent's model or version
+  (`Opus 4.8`, `Sonnet`, `Gemini …`, `claude-*`, `gemini-*`) in a commit, PR,
+  comment, or pushed artifact; keep it to chat. Generic attribution
+  (`Co-Authored-By: Claude` / `Gemini`, `Claude-Session:`, "Generated with
+  Claude Code") is fine.
 - **Unshallow before answering anything that depends on git history depth.**
   The sandbox clones shallow, so `git rev-list --count`, `git log` past the
   shallow boundary, and blame return wrong answers without warning. If
@@ -242,11 +256,13 @@ reply, no offer to correct it. It is not a finding.
   here, and it doesn't need repeating per branch.
 - **Watch your own PRs by subscription, plus one scheduled check.** Have a
   subscription — Claude Code makes one when you open a PR; where a client
-  doesn't, call `subscribe_pr_activity`. It delivers reviews, comments and CI
-  failures. It cannot deliver CI *success*, a push, the merge, Codex's clean
-  verdict (a reaction), or Codex never answering at all — so keep exactly one
-  check armed for as long as the PR is open (each event and each check costs
-  a model turn). Under drive, arm auto-merge at PR open too — but only where
+  doesn't, call `subscribe_pr_activity` (exposed only in `claude-code-remote`).
+  It delivers reviews, comments and CI failures. It cannot deliver CI
+  *success*, a push, the merge, Codex's clean verdict (a reaction), or Codex
+  never answering at all — so keep exactly one check armed for as long as the
+  PR is open (each event and each check costs a model turn): `send_later` in
+  Claude Code, `schedule` with `DurationSeconds` in Antigravity (cancel with
+  `manage_task` `kill`). Under drive, arm auto-merge at PR open too — but only where
   the ruleset makes the Codex verdict a required check AND requires
   conversations resolved: where CI is the only requirement it merges before
   Codex has answered, and an open review comment holds nothing back on its own.
@@ -294,8 +310,9 @@ reply, no offer to correct it. It is not a finding.
     if it doesn't merge cleanly with it (`git merge-tree --write-tree`, Git
     2.38 or later, exits 1). Any exit but 0 or 1 from either is a failure
     to report, not an answer. Your own rules decide the rebase from there.
-    Skip a PR with no session URL, and don't retry a failed send; its own
-    scheduled check is the fallback.
+    Skip a PR with no session URL, or when your client only has local
+    subagent messaging, and don't retry a failed send; its own scheduled
+    check is the fallback.
   - Merged or closed, take one last reply-and-resolve pass — a review can
     land after the merge. Nothing is holding the PR now, so on a merged one
     anything real goes to a follow-up PR, named on the thread, before you
@@ -371,6 +388,9 @@ reply, no offer to correct it. It is not a finding.
   `--fixup`) rather than tacking on an "address review" commit, per the
   one-commit-per-logical-change rule. Group several small fixes into one
   commit when they share a topic.
+- **Prefer the `mcp__github__*` tools where mounted** (Claude Code requires
+  them); otherwise fall back to `gh`, resolving threads with `gh api graphql`
+  `resolveReviewThread`.
 - **Reply to (and resolve) every addressed comment**, one thread at a time,
   not in bulk. `resolve_review_thread` works — pass the `PRRT_*` thread node
   ID from `pull_request_read` / `get_review_comments` (`review_threads[].id`)
