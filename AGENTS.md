@@ -8,482 +8,286 @@ last_modified: 2026-10-17
 
 `CLAUDE.md` and `GEMINI.md` are symlinks to this file. Edit `AGENTS.md`.
 
-Keep this file short and concrete — add a new rule the first time something
-bites, not the third. Every session loads it whole, so each rule costs context
-on every turn: say it once in the fewest words that carry the *why*, rewrite or
-trim an existing rule rather than appending beside it, and delete one that has
-stopped biting.
-
 **At the start of every session, print the full absolute path of the `AGENTS.md` you
 loaded and its `last_modified` date** (front matter), so a stale or wrong copy is caught
 before it steers the work. Bump `last_modified` whenever you edit this file.
 
+Keep this file short and concrete, **under 24,000 bytes** (`wc -c AGENTS.md`): Antigravity
+caps rule files at 24 KB and silently truncates the tail. Add a rule the first time
+something bites, not the third; say it once in the fewest words that carry the *why*;
+rewrite or trim rather than append; delete a rule that has stopped biting.
+
 ## Setup
 
-Install the following tools locally before working on this project:
+Install locally before working: **Go** (1.21+, build and test); **Git** (the primary VCS
+wrapped); **Mercurial** (`hg`, for vcs-hg: `pip install mercurial` or a package manager);
+**Jujutsu** (`jj`, for vcs-jj: https://github.com/jj-vcs/jj); **chg** (benchmarking; a
+package manager, e.g. `apt install chg`, or Mercurial's contrib directory).
 
-- **Go** (1.21+): Required to build and test.
-- **Git**: Required. The primary VCS this tool wraps.
-- **Mercurial (hg)**: Required for testing vcs-hg. Install via `pip install mercurial` or your package manager.
-- **Jujutsu (jj)**: Required for testing vcs-jj. Install from https://github.com/jj-vcs/jj.
-- **chg**: Required for benchmarking. Mercurial's command server client for faster hg operations. Install via your package manager (e.g. `apt install chg`, or build from the Mercurial contrib directory).
-
-In a remote container, `.claude/hooks/session-start.sh` installs hg and jj at
-CI's pinned versions, but it is auto-invoked only in Claude Code; other agents
-run `CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh` themselves.
-Without hg and jj, `go test ./...` still reports ok while the vcs-hg and
-vcs-jj tests skip.
+In a remote container `.claude/hooks/session-start.sh` installs hg and jj at CI's pins, but
+it is auto-invoked only in Claude Code; other agents run
+`CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh` themselves. Without hg and jj,
+`go test ./...` still reports ok while the vcs-hg and vcs-jj tests skip.
 
 ## Development workflow
 
-### Always run tests
-
-Run tests after every change:
-
-```
-make test
-```
-
-This runs `go test ./...` across all packages. All tests must pass before
-committing.
-
-- **Always add tests.** New functionality gets a test that exercises its
-  behavior; bug fixes get a regression test that fails before the fix.
-- **Fix any preexisting test failures as the *first* commit of the series.**
-  Don't stack new work on a red baseline. If the failure is genuinely
-  unrelated and out of scope, say so up front and confirm before skipping it.
-- **Don't paper over flaky/racy tests** with `time.Sleep`, retry loops, or
-  bumped timeouts. Make the ordering explicit (channels, `sync.WaitGroup`,
-  test fixtures that block on real signals) or fix the underlying race.
-- **Don't disable a failing check** (`go vet`, `staticcheck`, a test) to make
-  it pass — fix the underlying issue.
-
-### Benchmarking
-
-When making performance-related changes, benchmark before and after:
-
-```
-go test -bench=. -benchmem ./...
-```
-
-Report the benchmark results in your commit message or PR description,
-including both the before and after numbers.
-
-### Building
-
-```
-make        # build all binaries
-make clean  # remove built binaries
-```
-
-### Code organization
-
-- `vcsdetect/` - VCS detection and cache. Changes here affect all VCS backends.
-- `runner/` - Subprocess execution helpers. Keep this minimal.
-- `cmd/vcs/` - Main dispatcher. Rarely needs changes.
-- `cmd/vcs-git/` - Git subcommand translations.
-- `cmd/vcs-hg/` - Mercurial subcommand translations.
-- `cmd/vcs-jj/` - Jujutsu subcommand translations.
-
-### Adding a new subcommand
-
-1. Add the case to the `dispatch` switch in each `cmd/vcs-*/main.go` that supports it.
-2. Add a test if the subcommand has non-trivial logic (argument parsing, fallbacks, etc.).
-3. Update the command table in `README.md`.
-4. Run `make test` to verify.
-
-## Talking to the user
-
-- **One question at a time.** Never stack multiple questions in a single turn —
-  ask the most important one, wait for the answer, then ask the next if you
-  still need it. A wall of bundled questions is harder to answer than a short
-  back-and-forth.
-- **Don't interrupt.** Never fire off a question while the user is still
-  typing. Let them finish; a half-typed message isn't an invitation to jump in.
-- **Answer a mid-turn message first.** A user message that arrives while
-  you're working — the "sent while you were working" interjection — is
-  addressed in your very next output, before any further tool call, even if
-  it's one sentence. A merge cue is the exception — its hygiene runs first,
-  and announcing the switch is that answer.
-- **Message only when the user needs to see it** (maintainer, 2026-10-15): each one
-  notifies their phone. Work and listen in silence; speak up for a question or blocker,
-  something to merge or act on, a merge, an autopilot decision (to review when seen,
-  never waited on), or a change from the plan, `SPEC.md` or their instructions, a
-  review-prompted one included. Never for progress (a client's nudge doesn't count), a
-  review or a push alone (its report rides the next message), routine machinery, or a
-  mistake caught and fixed before it reached the repo. The session-start `AGENTS.md`
-  line still opens every session.
-- **Keep replies short — don't dump a full page.** Lead with the single most
-  important point and stop. If there's more, say the first point and ask
-  whether they're ready for the next one rather than emptying everything at
-  once.
-- **End the turn by restating any pending decision.** If you're waiting on an
-  answer — a question you asked, or a guess autopilot recorded for review — the
-  last line of the reply is that question, written out in about a sentence. A
-  back-reference ("as asked above") isn't actionable when the question is pages
-  back or was never actually put into words; restate it every turn until it's
-  answered. Nothing pending, no line.
-
-## Asking questions
-
-- **Ask in plain chat or the client's question tool** (`AskUserQuestion` in
-  Claude Code, `ask_question` in Antigravity), one question at a time.
-- **After asking, stop and wait for the answer.** Don't proceed on an assumed
-  answer, pick a "recommended" option yourself, or keep working on the part
-  the question affects.
+- **Run `make test` after every change**; all tests pass before committing.
+- **Always add tests**: new functionality gets a test of its behavior; a bug fix gets a
+  regression test that fails before the fix.
+- **Fix preexisting test failures as the *first* commit of the series** — no new work on a
+  red baseline. If genuinely unrelated and out of scope, say so up front and confirm before
+  skipping it.
+- **Don't paper over flaky/racy tests** with `time.Sleep`, retry loops or bumped timeouts:
+  make the ordering explicit (channels, `sync.WaitGroup`, fixtures that block on real
+  signals) or fix the race. **Don't disable a failing check** (`go vet`, `staticcheck`, a
+  test) — fix the underlying issue.
+- **Benchmark performance changes** before and after (`go test -bench=. -benchmem ./...`)
+  and report both numbers in the commit message or PR description.
+- Build with `make`; `make clean` removes the binaries.
+- Layout: `vcsdetect/` VCS detection and cache (changes affect every backend); `runner/`
+  subprocess helpers (keep minimal); `cmd/vcs/` the dispatcher (rarely changes);
+  `cmd/vcs-git/`, `cmd/vcs-hg/`, `cmd/vcs-jj/` each backend's subcommand translations.
+- **Adding a subcommand**: (1) add the case to the `dispatch` switch in each
+  `cmd/vcs-*/main.go` that supports it; (2) add a test if it has non-trivial logic
+  (argument parsing, fallbacks); (3) update `README.md`'s command table; (4) run `make test`.
 
 ## Error handling
 
-- **Don't silently swallow errors.** `_ = err`, a bare `if err != nil {}`, or
-  a `recover()` that discards what it caught hides real failures and burns
-  hours when something eventually breaks. Every error path needs to do three
-  things: **report** the error with enough context to identify the failed call
-  (wrap it — `fmt.Errorf("detecting vcs in %s: %w", dir, err)` — so the chain
-  survives); **clean up** what the call acquired (`defer` the
-  close / cancel / temp-dir removal); and **handle the case explicitly** —
-  pick what the caller sees (a sentinel error, a zero value, a non-zero exit)
-  rather than letting control fall through. This tool shells out constantly,
-  so the common case is a subprocess that exits non-zero: distinguish "not a
-  repo / subcommand unsupported here" (a legitimate fallback) from "the VCS
-  binary failed" (an error the user must see) instead of collapsing both into
-  a silent fallback. If you genuinely want to ignore a specific failure, name
-  the reason in a one-line comment and keep it traceable.
+- **Don't silently swallow errors** (`_ = err`, an empty `if err != nil {}`, a `recover()`
+  that discards). Every error path **reports** with context, wrapped so the chain survives
+  (`fmt.Errorf("detecting vcs in %s: %w", dir, err)`); **cleans up** what the call acquired
+  (`defer` close/cancel/temp-dir removal); and **handles the case explicitly** (a sentinel
+  error, a zero value, a non-zero exit). For a subprocess that exits non-zero, keep "not a
+  repo / unsupported here" (a legitimate fallback) distinct from "the VCS binary failed"
+  (an error the user must see). To ignore a specific failure, say why in a one-line comment
+  and keep it traceable.
 
 ## Privacy
 
-- **Never put user data in any artifact that leaves this machine.** That
-  includes commit subjects and bodies, PR titles / descriptions / comments,
-  review replies, issue text, branch names, code comments, test fixtures, and
-  anything else that ends up on GitHub. For a VCS wrapper that means: absolute
-  paths containing the user's home directory or real name, private repository
-  names and remote URLs, hostnames, commit messages copied out of a private
-  repo, and any credential or token that shows up in a remote URL. Use generic
-  placeholders (`/home/user/project`, `git@example.com:org/repo.git`) in
-  examples, fixtures, and reproductions. If a user-supplied bug report contains
-  any of it, paraphrase in the commit / PR — don't quote verbatim. When in
-  doubt, ask before pushing.
-- **Command output is not one of those artifacts.** Diagnostics, error text and
-  progress lines print on the user's own terminal, and naming the repository,
-  path or remote is usually the point of the message. Redact only secrets:
-  tokens, keys, and passwords embedded in remote URLs. Quoting that output into
-  a commit, PR, issue, or fixture republishes it, and the bullet above governs
-  again — paraphrase or use a placeholder there.
+- **Never put user data in an artifact that leaves this machine** (commits, PRs, comments,
+  review replies, issues, branch names, code comments, fixtures): home paths or a real
+  name, private repository names and remote URLs, hostnames, commit messages from a private
+  repo, credentials in a remote URL. Use placeholders (`/home/user/project`,
+  `git@example.com:org/repo.git`); paraphrase bug reports; ask before pushing when in doubt.
+- **Command output is not one of those artifacts**: it prints on the user's terminal, where
+  naming the repo, path or remote is the point. Redact only secrets (tokens, keys,
+  passwords in remote URLs). Quoting it into a commit, PR, issue or fixture republishes it,
+  and the rule above governs again.
 
 ## Branching
 
-- **These rules assume an `origin` remote.** Without one you can't fetch,
-  branch from `origin/main`, push, or open a PR — say so and stop rather than
-  improvising a local substitute. **Exception:** in a sandbox that
-  intentionally provides no remote Git support (Codex cloud, say), follow the
-  normal branch rules from the current `HEAD` — a pre-created working branch
-  counts — commit locally, and report that fetch, push, and pull requests are
-  unavailable, using the sandbox's own PR handoff if it has one. That exception
-  outranks every `origin`-dependent step below it — the merge-cue fetch, cutting
-  a branch off `origin/main`, the closing PR link — so work from the current
-  `HEAD` and name what wasn't possible instead of faking it. One limit: a merge
-  cue needs a base that *contains* the merge, and an offline sandbox can't fetch
-  one. Say the follow-up needs a fresh sandbox or a synced checkout rather than
-  branching off a `HEAD` whose commits just landed upstream.
-- **Branch naming.** Feature branches are prefixed with the agent's own
-  short name: `<agent>/<short-topic>` (e.g. `claude/...` for Claude Code,
-  `gemini/...` for Gemini / Antigravity, `codex/...` for Codex, `cursor/...`
-  for Cursor, etc.). Human contributors
-  pick a name that identifies them. The placeholder `<agent>` below stands
-  in for whichever prefix you use — don't hard-code `claude/` unless you
-  *are* Claude Code.
-- **Workflow.** `<agent>/<short-topic>` branch off `origin/main` → PR →
-  rebase-merge. One topic per branch. Follow-up work after a merge goes on a
-  new branch. Never commit to `main` / `master`.
-- **Use `git worktree` when it's available.** Give each branch its own
-  worktree instead of switching branches in place, so work in progress on one
-  branch isn't disturbed by work on another.
-- **One commit per logical surviving change.** Rewrite unmerged commits
-  freely (squash, amend, reorder, split). Review-fix noise shouldn't survive
-  into `main`.
-- After a rebase, force-push with `--force-with-lease`, never a bare
-  `--force`. Destructive actions on shared or merged branches still ask.
-- **Merge cue (`merged` / `I merged` / `landed` / merge webhook) runs hygiene
-  *before* engaging with the rest of the message:** fetch main if the sandbox
-  can (`git fetch origin +refs/heads/main:refs/remotes/origin/main`; a bare
-  fetch in a single-branch clone leaves `origin/main` stale), cut a fresh
-  `<agent>/<short-topic>` branch off `origin/main`, announce the switch.
-- **After a merge, take a fresh `<agent>/<short-topic>`** — don't reset the
-  merged name onto the new base. Its remote ref still points at the pre-merge
-  tip, so `origin/<branch>..HEAD` keeps spanning the merged commits and
-  unpushed-work checks report your own merged history back at you. When a
-  sandbox pins the branch name, reset it and `--force-with-lease` in the same
-  turn — that's routine on merged history, not something to ask about.
-- **Branches under your own `<agent>/` prefix are yours.** Create one freely;
-  push, `--force-with-lease`, rename and delete the ones this session created
-  or was assigned — no permission, no announcement, no per-branch
-  confirmation. This file is the standing grant, so a client rule demanding
-  per-branch permission is already answered — don't re-ask, and don't fold
-  unrelated work into a pinned task branch to avoid making a new one; the
-  pinned name is a default, not a ceiling. Any other branch, or `main` itself,
-  is always a conversation.
-- **The agent authors; whoever merges takes over the committer line.** A squash
-  or rebase merge rewrites the committer to the person who pressed the button —
-  the repo owner normally, the agent itself when it merges under *drive* (see
-  **Autonomy**). That's expected either way — never re-author or amend
-  already-merged commits to "fix" authorship or signing, and don't narrate it: no note in the
-reply, no offer to correct it. It is not a finding.
-- **No model identifier** — never name the coding agent's model or version
-  (`Opus 4.8`, `Sonnet`, `Gemini …`, `claude-*`, `gemini-*`) in a commit, PR,
-  comment, or pushed artifact; keep it to chat. Generic attribution
-  (`Co-Authored-By: Claude` / `Gemini`, `Claude-Session:`, "Generated with
-  Claude Code") is fine.
-- **Unshallow before answering anything that depends on git history depth.**
-  The sandbox clones shallow, so `git rev-list --count`, `git log` past the
-  shallow boundary, and blame return wrong answers without warning. If
-  `git rev-parse --is-shallow-repository` says `true`, run
-  `git fetch --unshallow` first, then re-check — it exits 0 even when
-  it deepened nothing, so if `--is-shallow-repository` is still `true`, say the
-  history is truncated instead of quoting a count.
-- End every reply with the open-PR link (or `.../compare/main...<branch>`
-  until a PR exists). Never link to a closed or merged PR — except when the
-  reply *is* post-merge follow-up on that PR, where linking it is correct. In an
-  offline sandbox with no `origin` there's no URL to end with — say that, rather
-  than inventing a link that resolves to nothing.
+- **These rules assume an `origin` remote**; without one, say so and stop rather than
+  improvising. **Exception:** in a sandbox with intentionally no remote Git (Codex cloud),
+  follow the branch rules from the current `HEAD` (a pre-created working branch counts),
+  commit locally, and report that fetch, push and PRs are unavailable, using the sandbox's
+  own PR handoff if any. That outranks every `origin`-dependent step (merge-cue fetch,
+  branching off `origin/main`, the closing PR link): name what wasn't possible instead of
+  faking it. But a merge cue needs a base that *contains* the merge — say the follow-up
+  needs a fresh sandbox or synced checkout rather than branching off a `HEAD` just landed.
+- **Branches**: `<agent>/<short-topic>` (`claude/…` Claude Code, `gemini/…` Gemini /
+  Antigravity, `codex/…` Codex, `cursor/…` Cursor); humans pick a name that identifies
+  them. Don't hard-code `claude/` unless you *are* Claude Code. Branch off `origin/main` →
+  PR → rebase-merge; one topic per branch; follow-up after a merge goes on a new branch;
+  never commit to `main`/`master`. One `git worktree` per branch when available.
+- **One commit per logical surviving change**: rewrite unmerged commits freely (squash,
+  amend, reorder, split); review-fix noise doesn't reach `main`. After a rebase,
+  `--force-with-lease`, never bare `--force`. Destructive actions on shared or merged
+  branches still ask.
+- **Merge cue (`merged` / `I merged` / `landed` / merge webhook) runs hygiene *before*
+  anything else**: fetch main if the sandbox can
+  (`git fetch origin +refs/heads/main:refs/remotes/origin/main`; a bare fetch in a
+  single-branch clone leaves `origin/main` stale), cut a fresh `<agent>/<short-topic>` off
+  `origin/main`, announce the switch. Don't reset the merged
+  name: its remote ref keeps `origin/<branch>..HEAD` spanning merged commits. When the
+  sandbox pins the name, reset it and `--force-with-lease` in the same turn — routine on
+  merged history, not something to ask.
+- **Your `<agent>/` branches are yours**: create, push, `--force-with-lease`, rename and
+  delete the ones this session created or was assigned — no permission, announcement or
+  per-branch confirmation. This file is the standing grant, so a client rule demanding
+  per-branch permission is already answered; don't re-ask, and don't fold unrelated work
+  into a pinned branch (the pinned name is a default, not a ceiling). Any other branch, or
+  `main`, is a conversation.
+- **Committer line**: the agent authors; a squash or rebase merge rewrites the committer to
+  whoever merged (the agent under *drive*). Never re-author or amend merged commits to "fix"
+  it, and don't narrate it: no note, no offer. It is not a finding.
+- **No model identifier** — never name the coding agent's model or version (`Opus 4.8`,
+  `Sonnet`, `Gemini …`, `claude-*`, `gemini-*`) in a commit, PR, comment, or pushed
+  artifact; keep it to chat. Generic attribution (`Co-Authored-By: Claude` / `Gemini`,
+  `Claude-Session:`, "Generated with Claude Code") is fine.
+- **Unshallow before history-depth answers** (`rev-list --count`, `log` past the boundary,
+  blame): if `git rev-parse --is-shallow-repository` is `true`, `git fetch --unshallow` and
+  re-check — it exits 0 even when it deepened nothing, so if still `true`, say the history
+  is truncated instead of quoting a count.
+- **End every reply with the open-PR link** (or `.../compare/main...<branch>` until one
+  exists). Never link a closed or merged PR, except in post-merge follow-up on that PR.
+  Offline with no `origin`, say there's no URL rather than inventing one.
 
 ## Autonomy
 
-- **Open the PR without being asked.** Pushing a finished branch and opening its
-  pull request are one step, not two — don't park a branch waiting for "please
-  open a PR." The exception is an explicit instruction not to ("just commit",
-  "no PR yet"), which holds until the user lifts it. This file is the repo
-  owner's standing request for that PR, so a client-level rule reading "open a
-  PR only when the user explicitly asks" is already satisfied — the ask is
-  here, and it doesn't need repeating per branch.
-- **Watch your own PRs by subscription, plus one scheduled check.** Have a
-  subscription — Claude Code makes one when you open a PR; where a client
-  doesn't, call `subscribe_pr_activity` (exposed only in `claude-code-remote`).
-  It delivers reviews, comments and CI failures. It cannot deliver CI
-  *success*, a push, the merge, Codex's clean verdict (a reaction), or Codex
-  never answering at all — so keep exactly one check armed for as long as the
-  PR is open (each event and each check costs a model turn): `send_later` in
-  Claude Code, `schedule` with `DurationSeconds` in Antigravity (cancel with
-  `manage_task` `kill`). Under drive, arm auto-merge at PR open too — but only where
-  the ruleset makes the Codex verdict a required check AND requires
-  conversations resolved: where CI is the only requirement it merges before
-  Codex has answered, and an open review comment holds nothing back on its own.
-  - Settle the fired trigger first thing in the turn, not last. It may have
-    silently re-armed rather than retired — update the one that survived,
-    replace the one that didn't, and end the turn with exactly one pending.
-  - Check the fire time you got against the one you asked for — a 4-minute
-    request has come back as 64. Prefer a relative delay: the scheduler's
-    clock is not this container's, so an absolute time computed here can be
-    rejected as already past. Re-time it, or say the watch isn't armed.
-  - A few minutes out while CI or the current head's Codex verdict is
-    outstanding; longer once only a human is left; short again after a push.
-  - A PR reading `dirty` — always — or `behind` where the ruleset requires
-    branches up to date, needs a rebase onto its base and a lease-guarded
-    force-push. Read `mergeable_state` at every scheduled check, PR-event
-    wake and drive step, not this check alone, and act at once, unasked:
-    nothing reports a base advance, so that read is the only signal. Fetch
-    both refs by explicit refspec, unshallow a shallow clone, and rebase
-    onto the fetched `origin/<base>` — not always `main`, never the local
-    branch a fetch leaves behind. Confirm before you rebase that your branch
-    has every commit the remote head has, and before you push that the head
-    has not moved since the tip you noted before fetching: the push flags do
-    not reliably refuse a rewind, a commit you never fetched, or one you
-    fetched and did not rebase onto, and overwriting any of them loses
-    someone's work. If either fails, or you can't tell, stop and ask.
-  - Name the PR, and say what to re-read rather than what you read. A SHA or
-    a list of which PRs are open goes stale before it fires; one PR number
-    does not, and the trigger has to be matchable to it.
-  - A merge can leave other open PRs on its base needing a rebase (`dirty`,
-    or `behind` where branches must be up to date), and nothing tells them.
-    So at your first turn after one of your PRs merges, by hand or by
-    auto-merge, send every other open PR on that base that another session
-    drives one message — the session URL ends its body, where your client
-    can message sessions — naming that PR and saying only that its base now
-    points at `<sha>`, the base's tip after your merge. Send it whatever
-    the PR's state reads: right after a merge GitHub can still be computing
-    mergeability, so a PR about to need a rebase can look clean. Name no
-    merge and no other PR: a receiver on an older copy of these rules reads
-    either as its own merge cue. Receiving one, fetch the base and your
-    PR's head by refspec, unshallowing a shallow clone, and check that head
-    against the fetched base tip, not `<sha>`, which a later merge may
-    already have passed. Answered from your own clone, neither question can
-    be stale the way `mergeable_state` can: the head is `behind` if it
-    doesn't contain the tip (`git merge-base --is-ancestor`), and `dirty`
-    if it doesn't merge cleanly with it (`git merge-tree --write-tree`, Git
-    2.38 or later, exits 1). Any exit but 0 or 1 from either is a failure
-    to report, not an answer. Your own rules decide the rebase from there.
-    Skip a PR with no session URL, or when your client only has local
-    subagent messaging, and don't retry a failed send; its own scheduled
-    check is the fallback.
-  - Merged or closed, take one last reply-and-resolve pass — a review can
-    land after the merge. Nothing is holding the PR now, so on a merged one
-    anything real goes to a follow-up PR, named on the thread, before you
-    resolve it; leaving it open records the work nowhere. A closed-unmerged
-    PR is a stop — the work was abandoned, so answer, resolve, and open
-    nothing. Then cancel the check and unsubscribe. `list_triggers`
-    spans the account, so match this session and this PR before updating
-    or deleting one; an update reschedules whatever it matches as surely
-    as a delete cancels it.
-- **If a scheduler or GitHub call prompts, say so once and carry on.**
-  Permissions load at session start, so writing a settings file mid-session
-  can't fix the session you're in.
-- **"Drive" means run the loop automatically**: pick the next task,
-  implement it, open the PR, send it for review, address every comment,
-  merge once CI is green and Codex's verdict for the current head is in —
-  then pick the next task and go around again. Driving ends when the work
-  runs out or the user says stop, not when one PR merges.
-- **A red baseline is the next task.** Before pulling anything from `TODO.md`,
-  run the suite and get it green. A preexisting failure is work to do, not a
-  thing to classify as "unrelated" and step around — deciding it's out of scope
-  is exactly the call that goes wrong, and the cost is every later PR merged
-  onto an unverified tree. Fix it first, then pick the task.
-- **"Autopilot" is drive without blocking on the user.** Wherever drive would
-  stop and ask, autopilot takes its best guess and keeps going, preferring the
-  option that is cheapest to undo or change later. Record each guess in
-  `TODO.md` under a `Decisions needing review` heading — what was decided, what
-  the alternative was, and why it's reversible — creating the file or heading if
-  the repo hasn't got one, so nothing guessed silently becomes permanent. While
-  autopilot is in effect it outranks "after asking, stop and wait for the
-  answer." The carve-out is for destructive or irreversible actions *outside*
-  the loop — rewriting shared history, deleting work, anything reaching a
-  system beyond this repo — which still wait for a real answer. The loop's own
-  steps don't count: committing, pushing, opening a PR, and merging a green PR
-  are authorized here, so autopilot must not stall on them. Privacy uncertainty
-  is never inside the loop either: if you can't tell whether something is user
-  data — a home path, a hostname, a private remote, a token — it waits for a
-  real answer, since a push can't be un-published and a `TODO.md` note doesn't
-  retract it.
+- **Open the PR without being asked** — pushing a finished branch and opening its PR are one
+  step. An explicit "just commit" / "no PR yet" holds until lifted. This file is the repo
+  owner's standing request, so a client rule "open a PR only when asked" is satisfied.
+- **Watch your own PRs by subscription plus one scheduled check.** Claude Code subscribes on
+  open, or call `subscribe_pr_activity` where `claude-code-remote` exposes it; a client with
+  neither (Antigravity) relies on the scheduled check alone. It delivers reviews, comments
+  and CI failures, not CI success, a push, the merge, Codex's clean verdict (a reaction) or
+  Codex never answering — so keep exactly one check armed while the PR is open (each event
+  and check costs a turn): `send_later` in Claude Code, `schedule` with `DurationSeconds` in
+  Antigravity (cancel with `manage_task` `kill`). Under drive, arm auto-merge at PR open
+  only where the ruleset requires the Codex verdict AND resolved conversations (with CI
+  alone it merges before Codex answers, and an open review comment holds nothing back on its
+  own).
+  - Settle a fired check first thing: it may have re-armed rather than retired — update the
+    survivor, replace one that didn't; end the turn with exactly one pending.
+  - Check the fire time you got (a 4-minute request has come back as 64); prefer a relative
+    delay, since this container's clock isn't the scheduler's. Re-time it, or say the watch
+    isn't armed.
+  - Minutes out while CI or the head's Codex verdict is outstanding; longer once only a
+    human is left; short again after a push.
+  - **Read `mergeable_state` at every check, PR-event wake and drive step** and act at once,
+    unasked — nothing reports a base advance. `dirty` (always) or `behind` (where branches
+    must be up to date) needs a rebase and a lease-guarded force-push: fetch both refs by
+    refspec, unshallow, rebase onto the fetched `origin/<base>` (not always `main`, never
+    the local branch). Confirm before rebasing that your branch has every commit the remote
+    head has, and before pushing that the head hasn't moved since the tip you noted before
+    fetching — the push flags don't reliably refuse a rewind or a commit you never fetched
+    or rebased onto. If either fails, or you can't tell, stop and ask.
+  - Name the PR and say what to re-read, not what you read: a SHA or PR list goes stale,
+    one PR number doesn't, and the check must be matchable to it.
+  - **Wake PRs a merge leaves behind.** At your first turn after your PR merges (by hand or
+    auto-merge), send every other open PR on that base that another session drives one
+    message (its body ends with the session URL): name that PR and say only that its base
+    now points at `<sha>`, the base's tip after your merge — whatever its state reads, since
+    GitHub may still be computing mergeability. Name no merge and no other PR (an older copy
+    of these rules reads either as its own merge cue). Receiving one, fetch the base and
+    your PR's head by refspec (unshallow) and test that head against the fetched tip, not
+    `<sha>`: `behind` if `git merge-base --is-ancestor <tip> <head>` exits 1, `dirty` if
+    `git merge-tree --write-tree` (Git 2.38+) exits 1; any other exit is a failure to
+    report, not an answer. Your own rules decide the rebase. Skip a PR with no session URL,
+    or when your client only has local subagent messaging; don't retry a failed send.
+  - **Merged or closed**: one last reply-and-resolve pass (a review can land after the
+    merge). On a merged PR anything real goes to a follow-up PR, named on the thread,
+    before you resolve; a closed-unmerged PR is a stop — answer, resolve, open nothing.
+    Then cancel the check and unsubscribe, if subscribed. `list_triggers` spans the
+    account, so match this session and PR; an update reschedules whatever it matches.
+- **A scheduler or GitHub prompt is said once, then carry on** — permissions load at session
+  start, so a settings file written mid-session can't help.
+- **"Drive"**: pick the next task, implement, open the PR, send it for review, address every
+  comment, merge once CI is green and Codex's verdict for the current head is in, then the
+  next task. It ends when the work runs out or the user says stop, not at one merge.
+- **A red baseline is the next task**: before pulling from `TODO.md`, get the suite green. A
+  preexisting failure is work, not "unrelated" — fix it first.
+- **"Autopilot"**: drive without blocking — take the cheapest-to-undo guess and record it in
+  `TODO.md` under `Decisions needing review` (decided, alternative, why reversible),
+  creating the file or heading if missing. It outranks "stop and wait". Destructive or
+  irreversible acts outside the loop (rewriting shared history, deleting work, anything
+  beyond this repo) still wait for a real answer; the loop's own steps (commit, push, PR,
+  merge a green PR) never stall. Privacy doubt (a home path, hostname, private remote,
+  token) always waits — a push can't be un-published.
 
 ## Pull requests and reviews
 
-- **"Drive to merge"** is the PR stretch of *drive* (see **Autonomy**
-  above): open the PR, wait for the automatic Codex review, address every
-  review comment — fix it if you agree, reply on the thread saying why if
-  you don't — and merge once CI is green and Codex's verdict for the current
-  head is in.
-- **A paragraph that orders a new work item after the item before it — "next",
-  "then", "after that", "follow-up" — must be merged in order, after every
-  earlier item this session was given and any other PR the paragraph names.**
-  Its PR may open in parallel but merges only once each of those is finished,
-  with its PRs merged, in any repo, with no time cap; if one won't finish,
-  hold it and ask, autopilot included. Arm no auto-merge on it until then:
-  auto-merge cannot see the order. Read the list from the session's record,
-  not memory.
+- **"Drive to merge"** is drive's PR stretch: open, wait for Codex's automatic review,
+  address every comment (fix, or reply why not), merge on green CI plus Codex's verdict for
+  the current head.
+- **Ordered work** — a paragraph ordering an item after earlier ones ("next", "then",
+  "after that", "follow-up") — may open in parallel but merges only once every earlier
+  session item is finished, its PRs merged, and any PR the paragraph names has merged (any
+  repo, no time cap; if one won't finish, hold and ask, autopilot included). No auto-merge
+  until then. Read the list from the session's record, not memory.
 - Open PRs ready for review (not draft) unless asked otherwise.
-- **Update the PR title and body with the push — body first, then push** —
-  so they describe the full, latest state of the branch, not the scope it
-  had when it was opened. Re-read the diff against `origin/main` and patch
-  whatever drifted, then post the PR link in the next message after that push,
-  not only at the end of the conversation.
-- When a feature has multiple open PRs, list **every** open PR by URL,
-  one per line — the "View PR" chip sticks to the first link and hides
-  the rest (anthropics/claude-code#46625).
-- **Codex is the automated reviewer on this repo** — not Copilot. Its
-  reviews are triggered automatically; you don't request them, except to
-  confirm a rebutted false positive, or where *Read the Codex verdict* below
-  says the `codex` status is still pending.
-- **Address Codex comments automatically — don't wait to be asked.** Read each
-  one, decide whether it's a real issue or a false positive, and if it's real,
-  fix it in the same PR — the one exception being a real finding that's
-  genuinely out of scope for this PR, which you defer instead (see *Deferring a
-  finding* below). Fold the fix into the commit it belongs to (rebase /
-  `--fixup`) rather than tacking on an "address review" commit, per the
-  one-commit-per-logical-change rule. Group several small fixes into one
-  commit when they share a topic.
-- **Prefer the `mcp__github__*` tools where mounted** (Claude Code requires
-  them); otherwise fall back to `gh`, resolving threads with `gh api graphql`
-  `resolveReviewThread`.
-- **Reply to (and resolve) every addressed comment**, one thread at a time,
-  not in bulk. `resolve_review_thread` works — pass the `PRRT_*` thread node
-  ID from `pull_request_read` / `get_review_comments` (`review_threads[].id`)
-  as `threadId`. A comment's `PRRC_*` node ID fails; they're different
-  objects. Order of operations: push the fix commit first, then reply citing
-  the new sha, then resolve.
-- **Report each review in the next message you send, and what it said.** Name
-  the commit it read and the finding count — say so when that commit is no
-  longer the head — then one bullet per finding: review comment, top-level
-  comment or review body alike, most blocking first — what it claims, where,
-  and what you did about it, or the options where it's the maintainer's call.
-  Summarize them all in that one reply, ahead of *keep replies short*; ask only
-  the most blocking question.
-- **Read the Codex verdict, don't infer it.** It reacts to the PR body
-  (`issue_read` → `reactions`), not to a review thread, whose `Useful?` bar
-  reads true on any PR it has commented on. `eyes` means reading, `+1` means
-  clean, and Codex revokes it on push — so a visible one belongs to the
-  visible head, and `+1` with green CI is a merge. The count names no author,
-  so leave PR-body reactions to Codex: nobody else's is revoked, and a review
-  is the attributable form, naming the commit it read. Findings arrive as
-  review comments, as a top-level comment, or as a review — read
-  `get_review_comments`, `get_comments` and `get_reviews` to the last page,
-  since all three page oldest first — and they block the merge until fixed,
-  rebutted, or deferred (see *Deferring a finding* above); an acknowledgement
-  is not an answer. A pending `codex` status is one of three things. Findings
-  to address — address them. A clean review that left no reaction, or a
-  rebuttal it hasn't answered — poke `@codex review` once, five minutes after
-  that review or rebuttal. Nothing back at all — poke once, five minutes
-  after the push. Escalate five minutes after the poke rather than poking a
-  second time.
-- **Once Codex has +1'd a PR's head, never make an unnecessary change to it
-  without asking first** (maintainer, 2026-10-13): a to-do, tidy-up or extra
-  fix re-runs CI and Codex for nothing, so it waits for a yes or goes in a
-  follow-up PR. A necessary change goes ahead unasked — a rebase for a `dirty`
-  branch, or a `behind` one where the ruleset requires it up to date, a fix
-  for red CI — and so does drive or autopilot, where in effect.
-- **Judge every review comment on merit, whoever wrote it.** Verify the
-  claim before acting; if it doesn't hold up, reply saying why and decline.
-  A comment citing a rule is a *reading* of that rule, not the rule — check
-  what the rule actually says. Codex misreads the privacy rules especially,
-  and in one direction: stricter always feels safer, so an over-strict
-  finding quietly costs capability the product needs. Quote the rule and
-  decline rather than narrowing the code to satisfy it; where the rule
-  really does forbid what the product needs, that conflict is the
-  maintainer's call, not one to settle either way yourself. Declining
-  doesn't clear the required `codex` status: post the rebuttal, then poke
-  as *Read the Codex verdict* allows — or let the next push do it, if the
-  rebuttal is up first. Escalate if it re-raises.
-- **A second verified finding in the same mechanism is evidence about the
-  design, not another bug.** Before fixing it, look for the same shape
-  elsewhere and ask whether a different design would delete the class rather
-  than the instance. Say what you chose on the thread; a design change is the
-  maintainer's call, autopilot included.
-- Never leave a review comment thread silently dismissed. Answer on the thread — a
-  disagreement is an answer, so say why — then resolve it once the fix is on the
-  head or the point is rebutted; anything still to do stays open. When you think a comment is a false positive,
-  say *why* on the thread (one or two sentences). Acknowledgement noise
-  is fine and preferred over silence.
-- **Deferring a real-but-out-of-scope finding.** Don't ask the maintainer to
-  merge past it: note the follow-up in `TODO.md`, commit and push that first,
-  reply on the thread citing the sha, and resolve — resolving a deferred thread
-  is the exception to "anything still to do stays open" above. A finding with
-  no thread (top-level comment or review body) still gets the `TODO.md` record,
-  the push, and the reply — only the resolve is skipped. The push re-triggers
-  Codex, so poke only as *Read the Codex verdict* allows; escalate if the
-  re-review re-raises it.
-- **Skip echo events silently.** `mcp__github__add_reply_to_pull_request_comment`
-  / `add_issue_comment` post under whichever GitHub identity backs the MCP
-  auth, so a moment after you post a reply the same body comes back as a
-  webhook event authored by that identity. That's your own echo, not user
-  feedback — continue without a chat-side acknowledgement. The test is "did
-  *I* just post this body?", not "who is the author?".
+- **Update the PR title and body with the push, body first** — re-read the diff against
+  `origin/main` and patch what drifted; with no PR yet, push, then update as soon as one is
+  opened. Post the PR link in the next message after the push, not only at the end.
+- With several open PRs on a feature, list **every** one by URL, one per line (the "View PR"
+  chip shows only the first, anthropics/claude-code#46625).
+- **Prefer the `mcp__github__*` tools where mounted** (Claude Code requires them); otherwise
+  `gh`, resolving threads with `gh api graphql` `resolveReviewThread`.
+- **Codex is the automated reviewer** (not Copilot), triggered automatically; request it
+  only to confirm a rebutted false positive, or where a pending `codex` status calls for it
+  (below). **Address its comments unasked**: fix real ones in this PR, folded into their
+  commit (`--fixup`), grouping small same-topic fixes; defer only a real but out-of-scope
+  finding (below).
+- **Reply to and resolve each addressed comment**, one thread at a time: push the fix, reply
+  citing the new sha, then `resolve_review_thread` with the `PRRT_*` id from
+  `review_threads[].id` (a comment's `PRRC_*` id fails).
+- **Report each review in your next message**: the commit it read and the finding count (say
+  if it's no longer the head), then one bullet per finding — review comment, top-level
+  comment or review body, most blocking first: claim, where, what you did, or the options
+  where it's the maintainer's call. This outranks keeping replies short; ask only the most
+  blocking question.
+- **Read the Codex verdict, don't infer it.** It reacts to the PR body (`issue_read` →
+  `reactions`), not a thread (whose `Useful?` bar reads true on any PR it commented on):
+  `eyes` reading, `+1` clean, revoked on push — so `+1` belongs to the visible head, and
+  with green CI it's a merge. The count names no author, so leave PR-body reactions to
+  Codex; a review is the attributable form. Findings arrive as review comments, top-level
+  comments or reviews — read `get_review_comments`, `get_comments` and `get_reviews` to the
+  last page (oldest first). They block the merge until fixed, rebutted or deferred; an
+  acknowledgment isn't an answer. A pending `codex` status is findings to address; a clean
+  review with no reaction, or an unanswered rebuttal (poke `@codex review` once, five
+  minutes after it); or nothing back (poke once, five minutes after the push). Escalate
+  five minutes after a poke rather than poking twice.
+- **Once Codex has +1'd a head, make no unnecessary change without asking** (maintainer,
+  2026-10-13): a tidy-up waits for a yes or a follow-up PR. A rebase for `dirty` (or a
+  required `behind`), a red-CI fix, and drive or autopilot steps (where in effect) go ahead
+  unasked.
+- **Judge every comment on merit, whoever wrote it**: verify before acting; if it doesn't
+  hold, reply why and decline. A comment citing a rule is a *reading* of it — check what the
+  rule says. Codex misreads the privacy rules toward strictness, which quietly costs
+  capability: quote the rule and decline rather than narrowing the code; a genuine
+  rule-vs-need conflict is the maintainer's call, not yours to settle either way.
+  Declining doesn't clear the `codex` status: post the rebuttal, then poke as above (or let
+  the next push do it, if the rebuttal is up first); escalate if it re-raises.
+- **A second verified finding in the same mechanism is evidence about the design**: look for
+  the shape elsewhere and ask whether a different design deletes the class; say what you
+  chose on the thread. A design change is the maintainer's call, autopilot included.
+- **Never leave a thread silently dismissed**: answer on it (a disagreement or a false
+  positive is an answer — say why in a sentence or two), then resolve once the fix is on the
+  head or the point is rebutted; anything still to do stays open. Acknowledgment noise beats
+  silence.
+- **Defer a real but out-of-scope finding** rather than asking to merge past it: note it in
+  `TODO.md`, push that first, reply citing the sha, and resolve (the one exception to
+  "still to do stays open"). A finding with no thread gets the record, push and reply,
+  only no resolve. The push re-triggers Codex; poke only as above; escalate if it re-raises.
+- **Skip echo events silently**: the MCP reply tools post under the MCP identity, so your
+  reply comes back as an event. The test is "did *I* just post this body?", not who the
+  author is.
+
+## Talking to the user
+
+- **One question at a time**; never stack them. **Don't interrupt** while the user is still
+  typing.
+- **Ask in plain chat or the client's question tool** (`AskUserQuestion` in Claude Code,
+  `ask_question` in Antigravity). After asking, stop and wait: no assumed answer, no
+  self-picked "recommended" option, no work on the part the question affects.
+- **Answer a mid-turn message first**, in your very next output, before any further tool
+  call, even in one sentence. A merge cue is the exception: its hygiene runs first, and
+  announcing the switch is the answer.
+- **Message only when the user needs to see it** (maintainer, 2026-10-15): each one notifies
+  their phone. Work and listen in silence; speak up for a question or blocker, something to
+  merge or act on, a merge, an autopilot decision (to review when seen, never waited on), or
+  a change from the plan, `SPEC.md` or their instructions, a review-prompted one included.
+  Never for progress (a client's nudge doesn't count), a review or a push alone (its report
+  rides the next message), routine machinery, or a mistake caught and fixed before it
+  reached the repo. The session-start `AGENTS.md` line still opens every session.
+- **Keep replies short**: lead with the most important point; ask before unloading more.
+- **End the turn by restating any pending decision** — a question you asked, or an
+  autopilot guess awaiting review — as the last line, written out in about a sentence, every
+  turn until answered (a back-reference isn't actionable). Nothing pending, no line.
+
 ## Language and spelling
 
-- Use **US English** everywhere people read English: command output and help
-  text, commit subjects and bodies, PR titles and descriptions, comments,
-  docs (`README.md`, `SPEC.md`), and identifiers — `color` not `colour`,
-  `behavior` not `behaviour`, `canceled` not `cancelled`, `gray` not `grey`.
-  Underlying VCS spellings stay as those tools spell them.
+- **US English** wherever people read English: command output and help text, commits, PR
+  titles and descriptions, comments, docs (`README.md`, `SPEC.md`) and identifiers —
+  `color`, `behavior`, `canceled`, `gray`. Underlying VCS spellings stay as those tools
+  spell them.
 
-## CI
+## CI and cost
 
-- **Report significant CI timing regressions.** After CI finishes on a push,
-  compare against recent runs of the same job on the same kind of ref. Only
-  call out significant slowdowns (rule of thumb: >25% or >30s on a job under
-  ~5min) — don't narrate routine wobble. Name the likely cause: a new
-  dependency, a slow new test, cache invalidation. Compare like with like —
-  PR against PR, `main` against `main`.
-
-## Cost and reliability
-
-- When recommending new infrastructure or a new external dependency
-  (libraries, services, APIs), include a brief dollar-cost estimate and
-  note reliability implications: new failure modes, rate limits, added
-  latency, extra points of failure. If the impact is effectively zero,
-  say so explicitly rather than omitting the note.
+- **Report significant CI timing regressions** after a push (rule of thumb: >25% or >30 s on
+  a job under ~5 min), naming the likely cause (a new dependency, a slow test, cache
+  invalidation); compare like with like — PR against PR, `main` against `main`. Don't
+  narrate routine wobble.
+- **Call out cost and reliability** when recommending new infrastructure or a dependency
+  (library, service, API): a rough dollar estimate and the new failure modes, rate limits,
+  latency and points of failure; if the impact is effectively zero, say so.
