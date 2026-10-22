@@ -1,7 +1,7 @@
 ---
 trigger: always_on
 alwaysApply: true
-last_modified: 2026-10-17
+last_modified: 2026-10-22
 ---
 
 # Agent Instructions
@@ -224,9 +224,10 @@ it is auto-invoked only in Claude Code; other agents run
   comments or reviews — read `get_review_comments`, `get_comments` and `get_reviews` to the
   last page (oldest first). They block the merge until fixed, rebutted or deferred; an
   acknowledgment isn't an answer. A pending `codex` status is findings to address; a clean
-  review with no reaction, or an unanswered rebuttal (poke `@codex review` once, five
-  minutes after it); or nothing back (poke once, five minutes after the push). Escalate
-  five minutes after a poke rather than poking twice.
+  review with no reaction, or an unanswered rebuttal (poke `@codex review` five minutes
+  after it); or a hung review, nothing back five minutes after the push or stuck at running
+  (👀) ten minutes on (poke). A poke that hangs the same way gets a second an hour later;
+  escalate only if that one hangs too, never after one (maintainer, 2026-10-22).
 - **Once Codex has +1'd a head, make no unnecessary change without asking** (maintainer,
   2026-10-13): a tidy-up waits for a yes or a follow-up PR. A rebase for `dirty` (or a
   required `behind`), a red-CI fix, and drive or autopilot steps (where in effect) go ahead
