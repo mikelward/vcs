@@ -12,7 +12,7 @@ last_modified: 2026-10-26
 loaded and its `last_modified` date** (front matter), so a stale or wrong copy is caught
 before it steers the work. Bump `last_modified` whenever you edit this file.
 
-Keep this file short and concrete, **under 24,000 bytes** (`wc -c AGENTS.md`): Antigravity
+Keep this file short and concrete, **under 22,000 bytes** (`wc -c AGENTS.md`): Antigravity
 caps rule files at 24 KB and silently truncates the tail. Add a rule the first time
 something bites, not the third; say it once in the fewest words that carry the *why*;
 rewrite or trim rather than append; delete a rule that has stopped biting.
