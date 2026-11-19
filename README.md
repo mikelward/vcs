@@ -204,6 +204,11 @@ make clean    # remove built binaries
 `make` uses real file targets, so re-running it is free when sources haven't
 changed. This makes it safe to run from a login script.
 
+Binaries are built with `-trimpath`, so they don't contain the directory
+they were built in, and one commit and Go version always produce the same
+binary. To check an installed copy, build that commit and compare:
+`cmp ~/.local/bin/vcs vcs`.
+
 ## Installing
 
 For non-root users, `make install` defaults to `~/.local/bin`:
