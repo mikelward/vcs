@@ -7,28 +7,35 @@ else
 PREFIX ?= $(HOME)/.local
 endif
 
+# -trimpath keeps the build directory (usually under $HOME) out of the
+# binaries and makes builds reproducible: one commit and Go version give
+# the same bytes on any machine.
+GOBUILD = go build -trimpath
+
 SOURCES = $(shell find . -name '*.go' -not -name '*_test.go')
 
 all: $(BINARIES)
 
 # Real file targets so Make skips the build when sources are unchanged.
-vcs: $(SOURCES)
-	go build -o $@ ./cmd/vcs
+# They depend on the Makefile too, so a change to GOBUILD rebuilds them.
+vcs: $(SOURCES) Makefile
+	$(GOBUILD) -o $@ ./cmd/vcs
 
-vcs-git: $(SOURCES)
-	go build -o $@ ./cmd/vcs-git
+vcs-git: $(SOURCES) Makefile
+	$(GOBUILD) -o $@ ./cmd/vcs-git
 
-vcs-hg: $(SOURCES)
-	go build -o $@ ./cmd/vcs-hg
+vcs-hg: $(SOURCES) Makefile
+	$(GOBUILD) -o $@ ./cmd/vcs-hg
 
-vcs-jj: $(SOURCES)
-	go build -o $@ ./cmd/vcs-jj
+vcs-jj: $(SOURCES) Makefile
+	$(GOBUILD) -o $@ ./cmd/vcs-jj
 
-vcs-p4: $(SOURCES)
-	go build -o $@ ./cmd/vcs-p4
+vcs-p4: $(SOURCES) Makefile
+	$(GOBUILD) -o $@ ./cmd/vcs-p4
 
 test:
 	go test ./...
+	@GOBUILD='$(GOBUILD)' sh build_test.sh
 	@sh session_start_hook_test.sh
 
 install: $(BINARIES)
