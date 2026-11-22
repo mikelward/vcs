@@ -211,6 +211,59 @@ fork on the one ambiguous answer: `symbolic-ref --quiet` reports both a
 detached `HEAD` and an unreadable ref store as exit 1, and only `rev-parse`
 separates the branch-less checkout from the broken repository.
 
+## Portable version
+
+`portable/vcs` (POSIX sh) and `portable/vcs-py` (Python 3, standard library
+only) reimplement `vcs` for machines that can't run the Go binaries.
+
+The sh script parses the leading flags (`--vcs`, `--hg-path`, `-n`) and
+handles `--list-commands`, `detect`, `rootdir`, `backend`, `hosting`,
+`prompt-info`, `unmerged`, `clearcache` and `auto-fetch` itself. Anything
+else, and the rare forms of those (a `detect` path, `rootdir` arguments, a
+`--vcs` forced outside a repository, a working directory outside the cached
+root), it `exec`s `vcs-py` with the arguments as given. `vcs-py` is found
+beside the script, or at `$VCS_PY`. `vcs-py` implements every subcommand
+itself, including `prompt-line`, and translates each to the same native
+command as the Go backends; the tests compare every subcommand's dry-run
+output with the Go binaries.
+
+Detection reads and writes the same `.vcs_cache`. On a cache hit the sh
+script starts no processes.
+
+`prompt-info` differs from the Go version on purpose:
+
+- Git branch and `FETCH_HEAD` are found by reading `.git`, including the
+  `gitdir:` file of a linked worktree, whose `HEAD` and `FETCH_HEAD` live in
+  the worktree's own git directory. Only a reftable repository runs `git` for
+  the branch.
+- `behind` (`pull`) is also true when the fetch marker (`FETCH_HEAD`, or hg's
+  `00changelog.i`) is over 4 hours old, whether or not an upstream is
+  configured, because there is no background auto-fetch. A missing marker is
+  not stale.
+- jj on a git backend takes one `jj log -r '@ | remote_bookmarks()'` whose
+  template prints `@*` for an undescribed working copy with changes and
+  `upstream` or `behind` for each remote bookmark, instead of up to three jj
+  processes.
+- jj on any other backend (e.g. piper) reads the mtime of `.jj/vcs-synced`,
+  which `vcs pull` and `vcs fastforward` update after a successful sync. The
+  prompt runs no jj for `behind`. A sync run another way leaves the reminder
+  showing until the next `vcs pull`. When the marker is missing, as in a
+  workspace `vcs pull` hasn't synced yet, the prompt runs `jj op log
+  --ignore-working-copy` once and dates the marker from the last operation
+  whose description mentions a fetch, sync, pull or import (2000 if none
+  does, so the reminder shows). If jj fails, its error is shown with what
+  failed, no marker is made, and the next prompt asks again.
+- In a secondary jj workspace, where `.jj/repo` is a file holding the path of
+  the main workspace's repo relative to `.jj`, detection follows it to find
+  the backend.
+
+When a status probe (`git status`, `hg summary`, `hg status`, `jj log`)
+fails, its error goes to stderr with a line saying which probe failed, and
+the prompt renders without status or `pull` rather than as a clean checkout.
+
+`auto-fetch` does nothing and exits 0 (`--verbose` prints `disabled`), so
+shell hooks that call it stay harmless.
+
 ## Hosting Detection
 
 Hosting platform is detected by parsing the git remote `origin` URL from

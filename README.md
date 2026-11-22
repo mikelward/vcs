@@ -226,6 +226,45 @@ make install PREFIX=/opt/vcs
 Ensure `PREFIX/bin` is on your `PATH` (most distros include `~/.local/bin`
 by default).
 
+## Portable version
+
+For machines that can't run the Go binaries, `portable/` has the same
+command set with no build step:
+
+- `portable/vcs` is a POSIX sh script that handles what a prompt runs
+  (`detect`, `rootdir`, `backend`, `hosting`, `prompt-info`, `unmerged`,
+  `clearcache`, `--list-commands`) as fast as the Go `vcs`.
+- `portable/vcs-py` is a Python 3 script, standard library only, that
+  implements every subcommand. The sh script hands everything else to it.
+
+```
+make install-portable
+```
+
+It installs both into `PREFIX/bin` (the same default as `make install`),
+replacing the Go `vcs` and removing `vcs-git`, `vcs-hg`, `vcs-jj` and
+`vcs-p4`. Neither file is a compiled binary, so a Mac whose Santa is in
+Lockdown mode runs them: Santa checks the binary that runs, which for these is
+the system's `/bin/sh` or `python3`.
+
+Measured `prompt-info` times, one call each (20-run mean on a Linux
+container):
+
+| Repository | Go | sh | Python |
+|------------|----|----|--------|
+| git | 5 ms | 5 ms | 55 ms |
+| jj (git backend) | 23 ms | 19 ms | 75 ms |
+| hg (with `chg`) | 41 ms | 37 ms | 77 ms |
+
+Where it differs from the Go version:
+
+| | Go | Portable |
+|---|---|---|
+| `auto-fetch` | Fetches in the background | Does nothing |
+| `prompt-info` `pull` | The upstream is ahead | The upstream is ahead, or the last fetch is over 4 hours old |
+| `pull` on a non-git jj backend (piper) | The last sync in `jj op log` is over 4 hours old | `.jj/vcs-synced` is over 4 hours old; `vcs pull` and `vcs fastforward` update it, a sync run another way does not, and a missing one is dated once from `jj op log` |
+| Secondary jj workspaces | Backend not detected | Backend detected |
+
 ## Shell integration
 
 Since these are standalone binaries, they work in any shell. Use

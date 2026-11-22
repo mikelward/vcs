@@ -1,0 +1,1790 @@
+#!/usr/bin/env python3
+"""vcs-py: every vcs subcommand, in Python 3 with only the standard library.
+
+The portable counterpart of the Go vcs, vcs-git, vcs-hg, vcs-jj and vcs-p4
+binaries, for machines that can't run them. The `vcs` shell script beside
+this file handles what a prompt runs and hands everything else here.
+
+Usage: vcs-py [--vcs=NAME] [--hg-path=PATH] [-n|--dry-run] <subcommand> [args...]
+"""
+
+import os
+import re
+import shutil
+import socket
+import stat
+import struct
+import subprocess
+import sys
+import time
+
+# Filled in by `make install-portable`; looked up from git when run from a
+# checkout.
+COMMIT = "@COMMIT@"
+DATE = "@DATE@"
+
+# The canonical subcommand list, kept equal to commands.go by the tests.
+COMMANDS = [
+    "absorb", "add", "addremove", "amend", "annotate", "at_tip", "base",
+    "blame", "branch", "branches", "change", "changed", "changelog",
+    "changes", "checkout", "commit", "commitforce", "copy", "count",
+    "describe", "diffedit", "diffs", "diffstat", "drop", "evolve",
+    "fastforward", "fetchtime", "fix", "goto", "graft", "graph", "histedit",
+    "ignore", "incoming", "lint", "map", "mergetool", "move", "next",
+    "outgoing", "pending", "pick", "precommit", "presubmit", "prev", "pull",
+    "push", "rebase", "recommit", "remove", "rename", "resolve", "restore",
+    "revert", "review", "reword", "rootdir", "show", "split", "squash",
+    "status", "submit", "submitforce", "track", "unamend", "uncommit",
+    "undo", "unknown", "unmerged", "unpulled", "unpushed", "untrack",
+    "upload", "uploadchain",
+]
+
+DEFAULT_FORMAT = "{project} {subdir} {branch} {status} {behind}"
+
+# How old the last fetch or sync may be before the prompt shows "pull".
+STALE_SECONDS = 4 * 60 * 60
+
+# Touched by `vcs pull` and `vcs fastforward` in a jj workspace on a
+# non-git backend; the prompt's staleness signal there.
+JJ_SYNC_MARKER = os.path.join(".jj", "vcs-synced")
+
+GIT_STATE_VARS = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NAMESPACE",
+    "GIT_PREFIX", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+)
+
+DRY_RUN = bool(os.environ.get("VCS_DRY_RUN"))
+
+
+class Error(Exception):
+    """A failure to report as "<program>: <message>", exiting 1."""
+
+
+class Failed(Exception):
+    """A captured command failed; its stderr is shown, then its exit code."""
+
+    def __init__(self, code, stderr):
+        Exception.__init__(self, code)
+        self.code = code
+        self.stderr = stderr
+
+
+# --- running commands ----------------------------------------------------
+
+_SAFE = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "0123456789/._-:=,@+%")
+
+
+def shell_quote(s):
+    if s == "":
+        return "''"
+    if all(c in _SAFE for c in s):
+        return s
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+def print_command(argv):
+    sys.stderr.write("+ " + " ".join(shell_quote(a) for a in argv) + "\n")
+    sys.stderr.flush()
+
+
+def _exit_code(rc):
+    return 128 - rc if rc < 0 else rc
+
+
+def run(*argv, **kwargs):
+    """Run a command with our stdio, or print it under --dry-run."""
+    if DRY_RUN:
+        print_command(argv)
+        return 0
+    sys.stdout.flush()
+    try:
+        return _exit_code(subprocess.call(list(argv), **kwargs))
+    except OSError as e:
+        raise Error("exec: %s: %s" % (argv[0], e.strerror))
+
+
+def capture(*argv, **kwargs):
+    """Run a command and return its stdout without trailing newlines."""
+    try:
+        p = subprocess.Popen(list(argv), stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE,
+                             universal_newlines=True, **kwargs)
+    except OSError as e:
+        raise Error("exec: %s: %s" % (argv[0], e.strerror))
+    out, err = p.communicate()
+    if p.returncode != 0:
+        raise Failed(_exit_code(p.returncode), err)
+    return out.rstrip("\n")
+
+
+def try_capture(*argv, **kwargs):
+    """capture, returning None when the command fails or is missing."""
+    try:
+        return capture(*argv, **kwargs)
+    except (Error, Failed):
+        return None
+
+
+def clean_git_env():
+    env = dict(os.environ)
+    for k in GIT_STATE_VARS:
+        env.pop(k, None)
+    return env
+
+
+def which(name):
+    return shutil.which(name)
+
+
+def succeeds(fn, *args):
+    try:
+        fn(*args)
+        return True
+    except (Error, Failed):
+        return False
+
+
+def append_lines(path, lines):
+    try:
+        with open(path, "a") as f:
+            for line in lines:
+                f.write(line + "\n")
+    except OSError as e:
+        raise Error("open %s: %s" % (path, e.strerror))
+    return 0
+
+
+def print_mtime(path):
+    try:
+        print(int(os.stat(path).st_mtime))
+    except OSError as e:
+        raise Error("stat %s: %s" % (path, e.strerror))
+    return 0
+
+
+def is_executable_file(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and st.st_mode & 0o111 != 0
+
+
+def getwd():
+    """The working directory, preferring $PWD's spelling as Go does."""
+    pwd = os.environ.get("PWD", "")
+    if os.path.isabs(pwd):
+        try:
+            if os.path.samestat(os.stat(pwd), os.stat(".")):
+                return pwd
+        except OSError:
+            pass
+    return os.getcwd()
+
+
+# --- detection -------------------------------------------------------------
+
+class Info(object):
+    def __init__(self, vcs="", backend="", hosting="", root=""):
+        self.vcs = vcs
+        self.backend = backend
+        self.hosting = hosting
+        self.root = root
+
+
+def read_first_line(path):
+    try:
+        with open(path) as f:
+            return f.readline().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def read_cache(path):
+    try:
+        with open(path) as f:
+            data = f.read()
+    except (OSError, UnicodeDecodeError):
+        return None
+    lines = data.split("\n", 2)
+    if len(lines) < 2:
+        return None
+    fields = lines[0].split()
+    if len(fields) < 3:
+        return None
+    info = Info(fields[0], fields[1], fields[2], lines[1])
+    if info.backend == "-":
+        info.backend = ""
+    if info.hosting == "-":
+        info.hosting = ""
+    return info
+
+
+def write_cache(directory, info):
+    try:
+        with open(os.path.join(directory, ".vcs_cache"), "w") as f:
+            f.write("%s %s %s\n%s\n" % (info.vcs, info.backend or "-",
+                                        info.hosting or "-", info.root))
+    except OSError:
+        pass  # Best effort: the directory may be read-only.
+
+
+MARKERS = ((".jj", "jj"), (".hg", "hg"), (".git", "git"), (".citc", "p4"),
+           (".p4config", "p4"))
+
+
+def detect(directory):
+    """Info for the repository containing directory, or None."""
+    directory = os.path.normpath(os.path.join(getwd(), directory))
+    info = read_cache(os.path.join(directory, ".vcs_cache"))
+    if info is not None:
+        return info
+    d = directory
+    vcs = None
+    while vcs is None:
+        for marker, name in MARKERS:
+            if os.path.exists(os.path.join(d, marker)):
+                vcs = name
+                break
+        else:
+            parent = os.path.dirname(d)
+            if parent == d:
+                return None
+            d = parent
+    info = Info(vcs, root=d)
+    if vcs == "jj":
+        info.backend = read_first_line(
+            os.path.join(jj_repo_dir(d), "store", "type")) or ""
+    elif vcs == "git":
+        info.backend = "git"
+    if info.backend == "git":
+        info.hosting = detect_hosting(vcs, d)
+    write_cache(directory, info)
+    return info
+
+
+def jj_repo_dir(root):
+    """A workspace's repo dir: in a secondary workspace .jj/repo is a file
+    holding the path to the main workspace's, relative to .jj."""
+    repo = os.path.join(root, ".jj", "repo")
+    if os.path.isfile(repo):
+        target = read_first_line(repo)
+        if target:
+            return os.path.normpath(os.path.join(root, ".jj", target))
+    return repo
+
+
+def jj_git_dir(root):
+    store = os.path.join(jj_repo_dir(root), "store")
+    target = read_first_line(os.path.join(store, "git_target"))
+    if target:
+        return os.path.normpath(os.path.join(store, target))
+    dot_git = os.path.join(root, ".git")
+    if os.path.isdir(dot_git):
+        return dot_git
+    return os.path.join(store, "git")
+
+
+def git_dir(root):
+    """The per-worktree git directory of the checkout at root."""
+    dot_git = os.path.join(root, ".git")
+    if os.path.isfile(dot_git):
+        line = read_first_line(dot_git) or ""
+        if line.startswith("gitdir:"):
+            return os.path.normpath(
+                os.path.join(root, line[len("gitdir:"):].strip()))
+    return dot_git
+
+
+def git_common_dir(root):
+    gd = git_dir(root)
+    common = read_first_line(os.path.join(gd, "commondir"))
+    if common:
+        return os.path.normpath(os.path.join(gd, common))
+    return gd
+
+
+def detect_hosting(vcs, root):
+    if vcs == "jj":
+        config = os.path.join(jj_git_dir(root), "config")
+    else:
+        config = os.path.join(git_common_dir(root), "config")
+    try:
+        with open(config) as f:
+            lines = f.read().split("\n")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    in_origin = False
+    for line in lines:
+        line = line.strip()
+        if line == '[remote "origin"]':
+            in_origin = True
+        elif line.startswith("["):
+            in_origin = False
+        elif in_origin and line.startswith("url") and "=" in line:
+            return classify_url(line.split("=", 1)[1].strip())
+    return ""
+
+
+def classify_url(url):
+    if "github.com" in url:
+        return "github"
+    if "gitlab.com" in url or "gitlab." in url:
+        return "gitlab"
+    if "bitbucket.org" in url:
+        return "bitbucket"
+    if "sr.ht" in url:
+        return "sourcehut"
+    if "googlesource.com" in url:
+        return "gerrit"
+    return ""
+
+
+# --- backends ----------------------------------------------------------------
+
+class Backend(object):
+    name = ""
+    label = ""
+
+    def __init__(self, info):
+        self.info = info
+
+    def dispatch(self, sub, args):
+        fn = self.commands().get(sub)
+        if fn is None:
+            raise Error("unknown %s subcommand: %s" % (self.label, sub))
+        return fn(args)
+
+
+def _first_is_message(args):
+    return bool(args) and not args[0].startswith("-")
+
+
+def _split_reviewers(args, flag):
+    reviewers, rest = [], []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-r", "-m", "--reviewer"):
+            if i + 1 >= len(args):
+                raise Error("%s requires a reviewer argument" % a)
+            reviewers += [flag, args[i + 1]]
+            i += 2
+            continue
+        if a.startswith("--reviewer="):
+            reviewers += [flag, a[len("--reviewer="):]]
+        else:
+            rest.append(a)
+        i += 1
+    return reviewers, rest
+
+
+class Git(Backend):
+    name = label = "git"
+
+    def git(self, *args):
+        return run("git", "--no-pager", *args)
+
+    def commands(self):
+        g = self.git
+        return {
+            "absorb": lambda a: g("absorb", *a),
+            "add": lambda a: g("add", "--intent-to-add", *a),
+            "addremove": lambda a: g("add", "--all", *a),
+            "amend": lambda a: self.commit_args(
+                ["commit", "--amend", "--no-edit"], a),
+            "annotate": lambda a: g("blame", *a),
+            "blame": lambda a: g("blame", *a),
+            "at_tip": lambda a: self.at_tip(),
+            "base": self.base,
+            "branch": lambda a: self.branch(),
+            "branches": lambda a: g("branch", *a),
+            "change": lambda a: g("commit", "--amend", *a),
+            "recommit": lambda a: g("commit", "--amend", *a),
+            "changed": lambda a: g("diff", "--name-only", *a),
+            "changelog": lambda a: g("log", "--oneline", *a),
+            "changes": lambda a: g("diff", *a),
+            "diffs": lambda a: g("diff", *a),
+            "checkout": lambda a: g("checkout", *a),
+            "goto": lambda a: g("checkout", *a),
+            "commit": lambda a: self.commit_args(["commit"], a),
+            "commitforce": lambda a: self.commit_args(
+                ["commit"], ["--no-verify"] + a),
+            "copy": self.copy,
+            "count": lambda a: self.count(),
+            "describe": lambda a: g("commit", "--amend", "--only",
+                                    "--allow-empty", *a),
+            "diffedit": lambda a: g("rebase", "--interactive", *a),
+            "diffstat": lambda a: g("diff", "--stat", *a),
+            "drop": self.drop,
+            "evolve": lambda a: self.fail(
+                "no automatic evolve in git; use: "
+                "git rebase --onto <new> <old> <branch>"),
+            "fastforward": lambda a: g("pull", "--ff-only"),
+            "fetchtime": lambda a: print_mtime(os.path.join(
+                capture("git", "rev-parse", "--git-dir"), "FETCH_HEAD")),
+            "fix": self.fix,
+            "graft": lambda a: g("cherry-pick", *a),
+            "pick": lambda a: g("cherry-pick", *a),
+            "graph": self.graph,
+            "histedit": lambda a: g("rebase", "--interactive"),
+            "ignore": lambda a: append_lines(os.path.join(
+                capture("git", "rev-parse", "--show-toplevel"),
+                ".gitignore"), a),
+            "incoming": lambda a: g("log", "--oneline", "HEAD..@{upstream}",
+                                    *a),
+            "unpulled": lambda a: g("log", "--oneline", "HEAD..@{upstream}",
+                                    *a),
+            "lint": lambda a: g("lint", *a),
+            "map": self.map,
+            "mergetool": lambda a: g("mergetool", *a),
+            "resolve": lambda a: g("mergetool", *a),
+            "move": lambda a: g("mv", *a),
+            "rename": lambda a: g("mv", *a),
+            "mv": lambda a: g("mv", *a),
+            "next": lambda a: self.next(),
+            "outgoing": self.outgoing,
+            "unpushed": self.outgoing,
+            "pending": self.pending,
+            "precommit": lambda a: self.hook("pre-commit", a),
+            "presubmit": lambda a: self.hook("pre-push", a),
+            "prev": lambda a: g("checkout", "HEAD~"),
+            "pull": self.pull,
+            "push": lambda a: g("push", *a),
+            "submit": lambda a: g("push", *a),
+            "submitforce": lambda a: g("push", "--no-verify", *a),
+            "rebase": lambda a: g("rebase", *a),
+            "remove": lambda a: g("rm", *a),
+            "rm": lambda a: g("rm", *a),
+            "restore": lambda a: g("checkout", "--", *a),
+            "revert": lambda a: (run("git", "checkout", "--", *a) if a
+                                 else run("git", "reset", "--hard", "HEAD")),
+            "review": self.review,
+            "upload": self.review,
+            "uploadchain": self.review,
+            "reword": lambda a: g(
+                "commit", "--amend", "--only", "--allow-empty",
+                *((["-m"] if _first_is_message(a) else []) + a)),
+            "rootdir": lambda a: g("rev-parse", "--show-toplevel"),
+            "show": lambda a: g("show", *a),
+            "split": lambda a: g("rebase", "-i", *a),
+            "squash": lambda a: g("merge", "--squash", *a),
+            "status": lambda a: g("status", "--short",
+                                  "--untracked-files=all", *a),
+            "track": lambda a: g("add", "--intent-to-add", *a),
+            "unamend": lambda a: g("reset", "--mixed", "HEAD@{1}"),
+            "uncommit": lambda a: g("reset", "--soft", "HEAD~"),
+            "undo": lambda a: g("reset", "--mixed", "HEAD~"),
+            "unknown": lambda a: run(
+                "git", "-C", capture("git", "rev-parse", "--show-toplevel"),
+                "ls-files", "-od", "--exclude-standard"),
+            "unmerged": self.unmerged,
+            "untrack": lambda a: g("rm", "--cached", *a),
+        }
+
+    @staticmethod
+    def fail(message):
+        raise Error(message)
+
+    def commit_args(self, base, args):
+        flags, files, dashdash = [], [], False
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == "--":
+                dashdash = True
+                files = args[i + 1:]
+                break
+            if a in ("-m", "-C", "-c", "-F", "-t"):
+                if i + 1 >= len(args):
+                    raise Error("%s requires an argument" % a)
+                flags += [a, args[i + 1]]
+                i += 2
+                continue
+            if a.startswith("-"):
+                flags.append(a)
+            else:
+                files = args[i:]
+                break
+            i += 1
+        if not files:
+            flags.append("--all")
+        return run("git", *(base + flags + (["--"] if dashdash else [])
+                            + files))
+
+    def at_tip(self):
+        if capture("git", "rev-parse", "--abbrev-ref", "HEAD") == "HEAD":
+            raise Error("detached HEAD")
+        return 0
+
+    def base(self, args):
+        if not succeeds(self.at_tip):
+            sys.stdout.write("(detached) ")
+        return self.git("log", "-1", "--oneline", "--no-decorate", *args)
+
+    def map(self, args):
+        if not succeeds(self.at_tip):
+            return self.graph([])
+        return self.outgoing(args)
+
+    def outgoing(self, args):
+        return self.git("log", "--oneline", "HEAD", "--not", "--remotes",
+                        *args)
+
+    def branch(self):
+        out = capture("git", "rev-parse", "--abbrev-ref", "HEAD")
+        if out != "HEAD":
+            print(out)
+        return 0
+
+    def graph(self, args):
+        fmt = "--pretty=format:%C(auto)%h%C(auto)%d %s"
+        if not args:
+            base = self.origin_base()
+            spec = ["--not", base] if base else ["--not", "--remotes"]
+            rc = self.git("log", "--graph", "--boundary", fmt, "--branches",
+                          "HEAD", *spec)
+            if rc != 0:
+                return self.git("log", "--graph", fmt)
+            return 0
+        return self.git("log", "--graph", fmt, *args)
+
+    @staticmethod
+    def origin_base():
+        out = try_capture("git", "rev-parse", "--abbrev-ref", "origin/HEAD")
+        if out is not None and out != "origin/HEAD":
+            return out
+        for ref in ("origin/main", "origin/master"):
+            if try_capture("git", "rev-parse", "--verify", ref) is not None:
+                return ref
+        return ""
+
+    def unmerged(self, args):
+        base = self.origin_base()
+        return self.git("branch", "-v", "--no-merged",
+                        *([base] if base else []) + args)
+
+    def hook(self, name, args):
+        script = os.path.join(capture("git", "rev-parse", "--git-dir"),
+                              "hooks", name)
+        if not is_executable_file(script):
+            raise Error("no %s hook" % script)
+        return run(script, *args)
+
+    def fix(self, args):
+        gd = try_capture("git", "rev-parse", "--git-dir")
+        if gd is not None:
+            script = os.path.join(gd, "hooks", "fix")
+            if is_executable_file(script):
+                return run(script, *args)
+        return self.git("fix", *args)
+
+    def next(self):
+        head = capture("git", "rev-parse", "HEAD")
+        for line in capture("git", "rev-list", "--children",
+                            "--all").split("\n"):
+            fields = line.split()
+            if len(fields) >= 2 and fields[0] == head:
+                return run("git", "checkout", fields[1])
+        raise Error("no next commit")
+
+    def pending(self, args):
+        if try_capture("git", "rev-parse", "--abbrev-ref",
+                       "@{upstream}") is None:
+            return self.git("status", "--short", *args)
+        return self.git("log", "--oneline", "@{upstream}..HEAD", *args)
+
+    def pull(self, args):
+        rc = self.git("pack-refs", "--all")
+        if rc != 0:
+            return rc
+        # Serialize with any other fetch in this repository (the Go vcs's
+        # background auto-fetch takes the same lock). Best effort.
+        lock = None
+        gd = try_capture("git", "rev-parse", "--git-dir")
+        if gd is not None:
+            lock = fetch_lock(gd)
+        try:
+            return self.git("pull", "--rebase", "--log", *args)
+        finally:
+            if lock is not None:
+                os.close(lock)
+
+    def drop(self, args):
+        if not args:
+            raise Error("drop requires a commit argument")
+        return self.git("rebase", "--onto", args[0] + "~", args[0])
+
+    def copy(self, args):
+        if len(args) < 2:
+            raise Error("copy requires source and destination")
+        rc = run("cp", *args)
+        if rc != 0:
+            return rc
+        return run("git", "add", args[-1])
+
+    def count(self):
+        if try_capture("git", "rev-parse",
+                       "--is-shallow-repository") == "true":
+            raise Error("count: shallow clone, history is incomplete "
+                        "(run: git fetch --unshallow)")
+        return self.git("rev-list", "--count", "HEAD")
+
+    def review(self, args):
+        reviewers, push_flags = _split_reviewers(args, "--reviewer")
+        rc = run("git", "push", *push_flags)
+        if rc != 0:
+            return rc
+        if which("gh"):
+            if run("gh", "pr", "view", "--json", "url", "-q", ".url") != 0:
+                create = ["pr", "create", "--fill"]
+                create += reviewers if reviewers else ["--draft"]
+                return run("gh", *create)
+        return 0
+
+
+def fetch_lock(gd):
+    """Block until this process holds vcs-fetch.lock in the git dir gd."""
+    try:
+        import fcntl
+    except ImportError:
+        return None
+    try:
+        fd = os.open(os.path.join(gd, "vcs-fetch.lock"),
+                     os.O_CREAT | os.O_WRONLY, 0o600)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+class Hg(Backend):
+    name = label = "hg"
+    ONELINE = "{onelinesummary}\\n"
+
+    def __init__(self, info, hg_path):
+        Backend.__init__(self, info)
+        self.cmd = hg_path or find_hg(warn=True)
+
+    def hg(self, *args):
+        return run(self.cmd, "--pager", "never", *args)
+
+    def commands(self):
+        h = self.hg
+        return {
+            "absorb": lambda a: h("--config", "extensions.absorb=", "absorb",
+                                  "--apply-changes", *a),
+            "add": lambda a: h("add", *a),
+            "track": lambda a: h("add", *a),
+            "addremove": lambda a: h("addremove", *a),
+            "amend": lambda a: h("amend", *a),
+            "annotate": lambda a: h("annotate", *a),
+            "at_tip": lambda a: self.at_tip(),
+            "base": lambda a: h("log", "-r", ".", "--template", self.ONELINE,
+                                *a),
+            "blame": lambda a: h("blame", *a),
+            "branch": lambda a: h("branch"),
+            "branches": lambda a: h("branches", *a),
+            "change": self.change,
+            "describe": self.change,
+            "changed": lambda a: (h("log", "--template", "{files}\\n", *a)
+                                  if a else h("status", "--no-status")),
+            "changelog": lambda a: h("log", "--template", self.ONELINE, *a),
+            "changes": lambda a: h("diff", *a),
+            "diffs": lambda a: h("diff", *a),
+            "checkout": lambda a: h("checkout", *a),
+            "goto": lambda a: h("update", *a),
+            "commit": lambda a: h("commit", *a),
+            "commitforce": lambda a: h("--config", "hooks.precommit=",
+                                       "--config", "hooks.pre-commit=",
+                                       "commit", *a),
+            "copy": lambda a: h("copy", *a),
+            "count": lambda a: self.count(),
+            "diffedit": lambda a: h("histedit", *a),
+            "diffstat": lambda a: h("diff", "--stat", *a),
+            "drop": lambda a: h("prune", *a),
+            "evolve": lambda a: h("evolve", *a),
+            "fastforward": lambda a: self.fastforward(),
+            "fetchtime": lambda a: print_mtime(os.path.join(
+                capture(self.cmd, "root"), ".hg", "store", "00changelog.i")),
+            "fix": lambda a: h("fix", *a),
+            "graft": lambda a: h("graft", *a),
+            "pick": lambda a: h("graft", *a),
+            "graph": self.graph,
+            "histedit": lambda a: h("histedit"),
+            "ignore": lambda a: append_lines(os.path.join(
+                capture(self.cmd, "root"), ".hgignore"), a),
+            "incoming": lambda a: h("incoming", "--template", self.ONELINE,
+                                    *a),
+            "unpulled": lambda a: h("incoming", "--template", self.ONELINE,
+                                    *a),
+            "lint": lambda a: h("lint", *a),
+            "map": self.map,
+            "mergetool": lambda a: h("resolve", *a),
+            "resolve": lambda a: h("resolve", *a),
+            "move": lambda a: h("rename", *a),
+            "rename": lambda a: h("rename", *a),
+            "mv": lambda a: h("rename", *a),
+            "next": lambda a: h("update", "-r", "min(children(.))", *a),
+            "outgoing": self.outgoing,
+            "unpushed": self.outgoing,
+            "pending": lambda a: h("status", *a),
+            "precommit": lambda a: h("precommit", *a),
+            "presubmit": lambda a: h("presubmit", *a),
+            "prev": lambda a: h("update", "-r", ".^", *a),
+            "pull": self.pull,
+            "push": lambda a: h("push", *a),
+            "rebase": lambda a: h("rebase", *a),
+            "recommit": lambda a: h("commit", "--amend", *a),
+            "remove": lambda a: h("remove", *a),
+            "rm": lambda a: h("remove", *a),
+            "restore": lambda a: h("revert", *a),
+            "revert": lambda a: h("revert", *a) if a else h("revert",
+                                                             "--all"),
+            "review": lambda a: Git.fail("hg review not supported"),
+            "reword": self.reword,
+            "rootdir": lambda a: h("root"),
+            "show": lambda a: h("export", *a),
+            "split": lambda a: h("split", *a),
+            "squash": lambda a: h("fold", *a),
+            "status": lambda a: h("status", *a),
+            "submit": lambda a: h("submit", *a),
+            "submitforce": lambda a: h("--config", "hooks.preoutgoing=",
+                                       "--config", "hooks.pre-push=",
+                                       "submit", *a),
+            "unamend": lambda a: h("unamend", *a),
+            "uncommit": lambda a: h("--config", "extensions.uncommit=",
+                                    "uncommit", *a),
+            "undo": lambda a: h("undo", *a),
+            "unknown": lambda a: h("status", "--unknown", "--deleted"),
+            "unmerged": lambda a: h(
+                "log", "-r", "bookmark() and draft() and not obsolete()",
+                "--template", "{bookmarks}\t{node|short} {desc|firstline}\n",
+                *a),
+            "untrack": lambda a: h("forget", *a),
+            "upload": lambda a: h("push", *a) if a else h("push", "-r", "."),
+            "uploadchain": lambda a: h("uploadchain", *a),
+        }
+
+    def at_tip(self):
+        out = capture(self.cmd, "--pager", "never", "log", "-r",
+                      ". and last(heads(branch(.)))", "--template", "x")
+        if out == "":
+            raise Error("not at tip")
+        return 0
+
+    def map(self, args):
+        if succeeds(self.at_tip):
+            return self.outgoing(args)
+        return self.graph([])
+
+    def outgoing(self, args):
+        return self.hg("--quiet", "log", "-r", "draft() and not obsolete()",
+                       "--template", self.ONELINE, *args)
+
+    def change(self, args):
+        if not args:
+            return self.hg("commit", "--amend", "-e")
+        return self.hg("commit", "--amend", *args)
+
+    def reword(self, args):
+        base = ["commit", "--amend", "--exclude", "re:.*"]
+        if not args:
+            return self.hg(*base + ["-e"])
+        if _first_is_message(args):
+            return self.hg(*base + ["-m"] + args)
+        return self.hg(*base + args)
+
+    def config_bool(self, key):
+        out = try_capture(self.cmd, "config", key)
+        return out is not None and out.strip().lower() in (
+            "true", "yes", "on", "1")
+
+    def pull(self, args):
+        base = ["pull", "--update", "--rebase"]
+        if self.config_bool("commands.update.requiredest"):
+            base = ["--config", "commands.update.requiredest=no"] + base
+        if self.config_bool("commands.rebase.requiredest"):
+            base = ["--config", "commands.rebase.requiredest=no"] + base
+        return self.hg(*base + args)
+
+    def fastforward(self):
+        rc = self.hg("sync", "--tool=internal:fail")
+        if rc != 0:
+            self.hg("rebase", "--abort")
+        return rc
+
+    def graph(self, args):
+        if not args:
+            revset = ("(draft() and not obsolete()) or "
+                      "parents(roots(draft() and not obsolete()))")
+            return self.hg("log", "--graph", "--template", "oneline", "-r",
+                           revset)
+        return self.hg("log", "--graph", "--template", "oneline", *args)
+
+    def count(self):
+        print(len(capture(self.cmd, "--pager", "never", "log", "-r",
+                          "ancestors(.)+.", "--template", "x")))
+        return 0
+
+
+def find_hg(warn=False):
+    if which("chg"):
+        return which("chg")
+    if warn:
+        sys.stderr.write("vcs-hg: warning: chg not found, falling back to hg "
+                         "(expect slower performance)\n")
+    return "hg"
+
+
+class Jj(Backend):
+    name = label = "jj"
+    GRAPH = (r'change_id.shortest() ++ " " ++ if(description, '
+             r'description.first_line(), "(no description set)") ++ '
+             r'if(bookmarks, " [" ++ bookmarks.join(", ") ++ "]", "") ++ "\n"')
+
+    def jj(self, *args):
+        return run("jj", "--no-pager", *args)
+
+    def git_backed(self):
+        return self.info.backend == "git"
+
+    def commands(self):
+        j = self.jj
+        return {
+            "absorb": lambda a: j("absorb", *a),
+            "add": lambda a: j("file", "track", *a),
+            "track": lambda a: j("file", "track", *a),
+            "addremove": lambda a: 0,
+            "amend": lambda a: j("squash", *a),
+            "annotate": lambda a: j("file", "annotate", *a),
+            "at_tip": lambda a: self.at_tip(),
+            "base": lambda a: j(
+                "log", "--no-graph", "-r", "@|@-", "--template",
+                r'if(self.contained_in("@"), if(description.first_line(), '
+                r'"@ " ++ change_id.shortest() ++ " " ++ '
+                r'description.first_line() ++ "\n"), "* " ++ '
+                r'change_id.shortest() ++ " " ++ description.first_line() '
+                r'++ "\n")', *a),
+            "blame": lambda a: j("file", "blame", *a),
+            "branch": lambda a: 0,
+            "branches": lambda a: j("bookmark", "list"),
+            "change": lambda a: j("describe", *a),
+            "describe": lambda a: j("describe", *a),
+            "recommit": lambda a: j("describe", *a),
+            "changed": lambda a: j("diff", "--summary", *a),
+            "changelog": lambda a: j("log",
+                                     "--template=builtin_log_oneline", *a),
+            "changes": lambda a: j("diff", *a),
+            "diffs": lambda a: j("diff", *a),
+            "checkout": lambda a: j("new", *a),
+            "goto": lambda a: j("new", *a),
+            "commit": lambda a: j("commit", *a),
+            "commitforce": lambda a: j("commit", *a),
+            "copy": lambda a: run("cp", *a),
+            "count": lambda a: self.count(),
+            "diffedit": lambda a: j("diffedit", *a),
+            "diffstat": lambda a: j("diff", "--stat", *a),
+            "drop": lambda a: j("abandon", *a),
+            "evolve": lambda a: self.evolve(),
+            "fastforward": self.fastforward,
+            "fetchtime": lambda a: print_mtime(os.path.join(
+                jj_git_dir(capture("jj", "workspace", "root")),
+                "FETCH_HEAD")),
+            "fix": lambda a: j("fix", *a),
+            "lint": lambda a: j("fix", *a),
+            "precommit": lambda a: j("fix", *a),
+            "graft": lambda a: j("duplicate", *a),
+            "pick": lambda a: j("duplicate", *a),
+            "graph": self.graph,
+            "histedit": lambda a: Git.fail(
+                "no interactive histedit in jj; "
+                "use: jj squash, jj split, jj edit"),
+            "ignore": lambda a: append_lines(os.path.join(
+                capture("jj", "workspace", "root"), ".gitignore"), a),
+            "incoming": lambda a: j("op", "log", *a),
+            "unpulled": lambda a: j("op", "log", *a),
+            "map": self.map,
+            "mergetool": lambda a: j("resolve", *a),
+            "resolve": lambda a: j("resolve", *a),
+            "move": self.rename,
+            "rename": self.rename,
+            "mv": self.rename,
+            "next": lambda a: j("next", *a),
+            "outgoing": self.outgoing,
+            "unpushed": self.outgoing,
+            "pending": lambda a: j("log", "-r", "mutable() ~ empty()", *a),
+            "presubmit": self.presubmit,
+            "prev": lambda a: j("prev", *a),
+            "pull": self.pull,
+            "push": self.push,
+            "submit": self.push,
+            "submitforce": self.push,
+            "rebase": lambda a: j("rebase", *a),
+            "remove": self.remove,
+            "rm": self.remove,
+            "restore": lambda a: j("restore", *a),
+            "revert": self.revert,
+            "review": self.review,
+            "upload": self.review,
+            "uploadchain": self.review,
+            "reword": lambda a: (j("describe", "-m", *a)
+                                 if _first_is_message(a)
+                                 else j("describe", *a)),
+            "rootdir": lambda a: j("workspace", "root"),
+            "show": lambda a: j("show", *a),
+            "split": lambda a: j("split", *a),
+            "squash": lambda a: j("squash", *a),
+            "status": self.status,
+            "unamend": lambda a: j("undo", *a),
+            "undo": lambda a: j("undo", *a),
+            "uncommit": lambda a: j("squash", "--from", "@-", "--into", "@",
+                                    *a),
+            "unknown": lambda a: j("file", "list", "--untracked", *a),
+            "unmerged": lambda a: j(
+                "log", "--no-graph", "-r", "bookmarks() & mutable() ~ empty()",
+                "--template",
+                r'bookmarks.join(", ") ++ "\t" ++ change_id.shortest() ++ '
+                r'" " ++ description.first_line() ++ "\n"', *a),
+            "untrack": lambda a: j("file", "untrack", *a),
+        }
+
+    def at_tip(self):
+        out = capture("jj", "--no-pager", "log", "--no-graph", "-r",
+                      "children(@) | (children(@-) ~ @)", "--template",
+                      '"x"')
+        if out != "":
+            raise Error("not at tip")
+        return 0
+
+    def map(self, args):
+        if succeeds(self.at_tip):
+            return self.outgoing(args)
+        return self.graph([])
+
+    def outgoing(self, args):
+        return self.jj("log", "--no-graph", "-r",
+                       "mutable() ~ empty() ~ ancestors(remote_bookmarks())",
+                       "--template",
+                       r'change_id.shortest() ++ " " ++ '
+                       r'description.first_line() ++ "\n"', *args)
+
+    def graph(self, args):
+        if not args:
+            revset = ("(mutable() ~ empty() ~ ancestors(remote_bookmarks())) "
+                      "| roots(mutable() ~ empty() ~ "
+                      "ancestors(remote_bookmarks()))-")
+            return self.jj("log", "--template", self.GRAPH, "-r", revset)
+        return self.jj("log", "--template", self.GRAPH, *args)
+
+    @staticmethod
+    def evolve():
+        sys.stderr.write(
+            "jj automatically rebases descendants; nothing to do\n")
+        return 0
+
+    def mark_synced(self, rc):
+        """Record a successful sync for the prompt's staleness check."""
+        if rc == 0 and not DRY_RUN and self.info.root:
+            path = os.path.join(self.info.root, JJ_SYNC_MARKER)
+            try:
+                with open(path, "a"):
+                    pass
+                os.utime(path, None)
+            except OSError as e:
+                sys.stderr.write("vcs-jj: cannot record the sync in %s: %s\n"
+                                 % (JJ_SYNC_MARKER, e.strerror))
+        return rc
+
+    def fastforward(self, args):
+        if self.git_backed():
+            return self.jj("git", "fetch", *args)
+        return self.mark_synced(self.jj("piper", "pull"))
+
+    def pull(self, args):
+        if self.git_backed():
+            return self.jj("git", "fetch", *args)
+        return self.mark_synced(self.jj("sync", *args))
+
+    def push(self, args):
+        if self.git_backed():
+            return self.jj("git", "push", *args)
+        return self.jj("upload", *args)
+
+    def presubmit(self, args):
+        if self.git_backed():
+            raise Error("no presubmit for git-backed repos; run tests locally")
+        return self.jj("piper", "presubmit", *args)
+
+    def remove(self, args):
+        rc = run("rm", *args)
+        if rc != 0:
+            return rc
+        return self.jj("file", "untrack", *args)
+
+    def rename(self, args):
+        if len(args) != 2:
+            raise Error("usage: rename <source> <dest>")
+        return run("mv", args[0], args[1])
+
+    def revert(self, args):
+        if not args:
+            return self.jj("restore")
+        if any(a.startswith("-") for a in args):
+            return self.jj("revert", *args)
+        return self.jj("restore", *args)
+
+    def review(self, args):
+        reviewers, push_flags = _split_reviewers(args, "-r")
+        if not self.git_backed():
+            return self.jj("upload", *push_flags)
+        rc = self.jj("git", "push", *push_flags)
+        if rc != 0:
+            return rc
+        if self.info.hosting == "github" and which("gh"):
+            bookmark = try_capture("jj", "bookmark", "list", "-r", "@") or ""
+            head = bookmark.split(":", 1)[0].strip() if bookmark else ""
+            view = ["pr", "view"] + ([head] if head else []) + [
+                "--json", "url", "-q", ".url"]
+            if run("gh", *view) != 0:
+                create = ["pr", "create", "--fill"]
+                if head:
+                    create += ["--head", head]
+                create += reviewers if reviewers else ["--draft"]
+                return run("gh", *create)
+        return 0
+
+    def count(self):
+        out = capture("jj", "--no-pager", "log", "--no-graph", "-r",
+                      "ancestors(@-) ~ root()", "-T", '"x"')
+        print(len(out))
+        return 0
+
+    def status(self, args):
+        if capture("jj", "log", "--no-graph", "-r", "@", "-T",
+                   "description") == "":
+            return self.jj("diff", "--summary", *args)
+        return 0
+
+
+class P4(Backend):
+    name = "p4"
+    label = "Perforce"
+
+    def __init__(self, info):
+        Backend.__init__(self, info)
+        self.cmd = "g4" if which("g4") else "p4"
+
+    def p4(self, *args):
+        return run(self.cmd, *args)
+
+    def capture(self, *args):
+        if DRY_RUN:
+            return ""
+        return capture(self.cmd, *args)
+
+    def commands(self):
+        p = self.p4
+
+        def unsupported(what, extra=""):
+            return lambda a: Git.fail("%s not supported in Perforce%s"
+                                      % (what, extra))
+
+        return {
+            "absorb": unsupported("absorb"),
+            "add": lambda a: p("add", *a),
+            "track": lambda a: p("add", *a),
+            "addremove": lambda a: p("reconcile", *a),
+            "amend": lambda a: p("change", *a),
+            "recommit": lambda a: p("change", *a),
+            "annotate": lambda a: p("annotate", *a),
+            "blame": lambda a: p("annotate", *a),
+            "at_tip": lambda a: self.at_tip(),
+            "base": self.base,
+            "branch": unsupported("branch"),
+            "branches": unsupported("branches"),
+            "change": lambda a: p("change", *a),
+            "describe": lambda a: p("change", *a),
+            "reword": lambda a: p("change", *a),
+            "changed": lambda a: p("opened", *a),
+            "changelog": lambda a: p("changes", *a),
+            "changes": lambda a: p("diff", *a),
+            "diffs": lambda a: p("diff", *a),
+            "checkout": lambda a: p("sync", *a),
+            "goto": lambda a: p("sync", *a),
+            "pull": lambda a: p("sync", *a),
+            "commit": lambda a: p("submit", *a),
+            "commitforce": lambda a: p("submit", *a),
+            "push": lambda a: p("submit", *a),
+            "submit": lambda a: p("submit", *a),
+            "submitforce": lambda a: p("submit", *a),
+            "copy": self.copy,
+            "count": lambda a: self.count(),
+            "diffedit": unsupported("diffedit"),
+            "diffstat": lambda a: p("diff", "-ds", *a),
+            "drop": unsupported(
+                "drop", "; use 'vcs revert' to discard pending changes"),
+            "evolve": unsupported("evolve"),
+            "fastforward": unsupported("fastforward",
+                                       "; use 'vcs pull' to sync"),
+            "fetchtime": lambda a: self.fetchtime(),
+            "fix": self.fix,
+            "lint": self.fix,
+            "graft": lambda a: p("integrate", *a),
+            "pick": lambda a: p("integrate", *a),
+            "graph": lambda a: p("changes", *a),
+            "histedit": unsupported("histedit"),
+            "ignore": lambda a: append_lines(
+                os.path.join(self.root(), ".p4ignore"), a),
+            "incoming": lambda a: p("sync", "-n", *a),
+            "unpulled": lambda a: p("sync", "-n", *a),
+            "map": lambda a: p("opened") or p("changes", "-m", "10"),
+            "mergetool": lambda a: p("resolve", *a),
+            "resolve": lambda a: p("resolve", *a),
+            "move": lambda a: p("move", *a),
+            "rename": lambda a: p("move", *a),
+            "mv": lambda a: p("move", *a),
+            "next": unsupported("next"),
+            "prev": unsupported("prev"),
+            "outgoing": lambda a: p("opened", *a),
+            "unpushed": lambda a: p("opened", *a),
+            "unmerged": lambda a: p("opened", *a),
+            "pending": lambda a: p("changes", "-s", "pending", "-c",
+                                   self.client()),
+            "precommit": lambda a: 0,
+            "presubmit": lambda a: 0,
+            "rebase": unsupported("rebase"),
+            "remove": lambda a: p("delete", *a),
+            "rm": lambda a: p("delete", *a),
+            "restore": lambda a: p("revert", *a),
+            "revert": lambda a: (p("revert", *a) if a else p(
+                "revert", "-Si", "//%s/..." % self.client())),
+            "review": lambda a: p("change", *a),
+            "upload": lambda a: p("change", *a),
+            "uploadchain": lambda a: p("change", *a),
+            "rootdir": lambda a: print(self.root()) or 0,
+            "show": lambda a: p("describe", *a),
+            "split": unsupported("split"),
+            "squash": unsupported("squash"),
+            "status": lambda a: p("status", *a),
+            "unamend": unsupported("unamend"),
+            "uncommit": unsupported("uncommit"),
+            "undo": unsupported("undo"),
+            "unknown": lambda a: p("status", "-a"),
+            "untrack": lambda a: p("revert", "-k", *a),
+        }
+
+    def at_tip(self):
+        out = self.capture("sync", "-n", "-m", "1")
+        if out == "" or out.strip().endswith("up-to-date."):
+            return 0
+        raise Error("not at tip (updates available on server)")
+
+    def info_field(self, name):
+        for line in self.capture("info").split("\n"):
+            if line.startswith(name + ":"):
+                return line[len(name) + 1:].strip()
+        return None
+
+    def client(self):
+        if DRY_RUN:
+            return "$P4CLIENT"
+        client = self.info_field("Client name")
+        if client is None:
+            raise Error("could not find client name in info")
+        return client
+
+    def root(self):
+        root = self.info_field("Client root")
+        if root is not None:
+            return root
+        d = getwd()
+        while True:
+            if any(os.path.exists(os.path.join(d, m))
+                   for m in (".citc", ".p4config")):
+                return d
+            parent = os.path.dirname(d)
+            if parent == d:
+                raise Error("could not find client root")
+            d = parent
+
+    def base(self, args):
+        out = self.capture("changes", "-m", "1", "#have")
+        if out == "":
+            raise Error("no base changes found")
+        parts = out.split()
+        if len(parts) < 2:
+            raise Error("invalid changes output: %r" % out)
+        return self.p4("describe", "-s", parts[1], *args)
+
+    def copy(self, args):
+        if len(args) < 2:
+            raise Error("copy requires source and destination")
+        dest = args[-1]
+        for src in args[:-1]:
+            if self.p4("integrate", src, dest) != 0:
+                rc = run("cp", src, dest) or self.p4("add", dest)
+                if rc != 0:
+                    return rc
+        return 0
+
+    def count(self):
+        out = self.capture("changes", "#have")
+        print(len([l for l in out.split("\n") if l.strip()]))
+        return 0
+
+    def fetchtime(self):
+        root = self.root()
+        for marker in (".p4config", ".citc"):
+            path = os.path.join(root, marker)
+            if os.path.exists(path):
+                return print_mtime(path)
+        raise Error("could not determine fetch time")
+
+    def fix(self, args):
+        try:
+            root = self.root()
+        except (Error, Failed):
+            return 0
+        for hook in (".p4/hooks/fix", ".g4/hooks/fix"):
+            script = os.path.join(root, hook)
+            if is_executable_file(script):
+                return run(script, *args)
+        return 0
+
+
+# --- prompt-info -----------------------------------------------------------
+
+def _older_than(path, seconds):
+    """Is path's mtime more than seconds ago? A missing file is not."""
+    try:
+        return time.time() - os.stat(path).st_mtime > seconds
+    except OSError:
+        return False
+
+
+class PromptResult(object):
+    def __init__(self):
+        self.project = self.subdir = self.branch = self.status = ""
+        self.behind = False
+
+
+def parse_fields(fmt):
+    return set(re.findall(r"\{(\w+)\}", fmt))
+
+
+def git_branch(root):
+    head = read_first_line(os.path.join(git_dir(root), "HEAD"))
+    if not head or not head.startswith("ref: refs/heads/"):
+        return ""
+    branch = head[len("ref: refs/heads/"):]
+    if branch != ".invalid":
+        return branch
+    # reftable: the HEAD file is a placeholder, so ask git.
+    env = clean_git_env()
+    try:
+        out = capture("git", "-C", root, "symbolic-ref", "--quiet", "HEAD",
+                      env=env)
+        return out[len("refs/heads/"):] if out.startswith("refs/heads/") \
+            else ""
+    except Failed as e:
+        if e.code != 1:
+            raise Error("git symbolic-ref in %s: %s"
+                        % (os.path.basename(root), e.stderr.strip()))
+    try:
+        capture("git", "-C", root, "rev-parse", "--symbolic-full-name",
+                "HEAD", env=env)
+    except Failed as e:
+        raise Error("git rev-parse in %s: %s"
+                    % (os.path.basename(root), e.stderr.strip()))
+    return ""
+
+
+JJ_DIRTY = 'if(description, "", if(empty, "", "*"))'
+
+
+# The local end time, as `touch -t` takes it, of each jj operation that
+# brought in upstream changes, newest first. Kept equal to the sh script's.
+JJ_SYNC_TIMES = (
+    'if(description.lower().contains("fetch") || '
+    'description.lower().contains("sync") || '
+    'description.lower().contains("pull") || '
+    'description.lower().contains("import"), '
+    'self.time().end().local().format("%Y%m%d%H%M.%S") ++ "\\n")')
+
+
+def seed_sync_marker(root, marker):
+    """Date a missing sync marker from the last sync in jj's operation log,
+    so a workspace `vcs pull` hasn't synced yet isn't reminded for nothing.
+    With no sync recorded it's dated 2000 and the reminder shows; if jj
+    fails, its error is shown, no marker is made, and the next prompt asks
+    again."""
+    try:
+        out = capture("jj", "-R", root, "op", "log", "--no-graph",
+                      "--ignore-working-copy", "-T", JJ_SYNC_TIMES)
+    except (Error, Failed) as e:
+        detail = (e.stderr.strip() if isinstance(e, Failed)
+                  else str(e.args[0]))
+        sys.stderr.write(
+            "vcs prompt-info: jj op log in %s failed, so the last sync is "
+            "unknown%s\n" % (os.path.basename(root),
+                             ": " + detail if detail else ""))
+        return
+    first = out.split("\n", 1)[0] or "200001010000.00"
+    try:
+        when = time.mktime(time.strptime(first, "%Y%m%d%H%M.%S"))
+    except ValueError:
+        # Unparseable: date it 2000, so the reminder shows.
+        when = time.mktime(time.strptime("200001010000.00",
+                                         "%Y%m%d%H%M.%S"))
+    try:
+        with open(marker, "a"):
+            pass
+        os.utime(marker, (when, when))
+    except OSError:
+        pass  # A read-only workspace: the reminder shows, as with no marker.
+
+
+def status_and_behind(info, hg_path, need_status, need_behind):
+    """("*" or "", behind) for the repository described by info.
+
+    If a probe fails, its error and what that leaves unknown go to stderr,
+    and the prompt renders without status or "pull"."""
+    try:
+        return _status_and_behind(info, hg_path, need_status, need_behind)
+    except _ProbeFailed:
+        return "", False
+
+
+class _ProbeFailed(Exception):
+    pass
+
+
+def _probe(name, root, *argv):
+    try:
+        return capture(*argv)
+    except (Error, Failed) as e:
+        detail = e.stderr if isinstance(e, Failed) else e.args[0] + "\n"
+        sys.stderr.write(detail if detail.endswith("\n") or not detail
+                         else detail + "\n")
+        sys.stderr.write("vcs prompt-info: %s in %s failed, so its status is "
+                         "unknown\n" % (name, os.path.basename(root)))
+        raise _ProbeFailed()
+
+
+def _status_and_behind(info, hg_path, need_status, need_behind):
+    root = info.root
+    status, behind = "", False
+    if info.vcs == "git":
+        out = _probe("git status", root, "git", "-C", root, "status",
+                     "--branch", "--porcelain", "--untracked-files=all")
+        first, _, rest = out.partition("\n")
+        status = "*" if rest.strip() else ""
+        behind = "..." in first and "behind " in first
+        if need_behind and not behind:
+            behind = _older_than(os.path.join(git_dir(root), "FETCH_HEAD"),
+                                 STALE_SECONDS)
+    elif info.vcs == "hg":
+        hg = hg_path or find_hg()
+        if need_behind:
+            out = _probe("hg summary", root, hg, "-R", root, "summary")
+            for line in out.split("\n"):
+                if line.startswith("commit:"):
+                    commit = line[len("commit:"):].strip()
+                    if commit != "(clean)" and not commit.startswith(
+                            "(clean) "):
+                        status = "*"
+                elif line.startswith("update:"):
+                    if line[len("update:"):].strip() not in ("",
+                                                             "(current)"):
+                        behind = True
+            if not need_status:
+                status = ""
+            behind = behind or _older_than(
+                os.path.join(root, ".hg", "store", "00changelog.i"),
+                STALE_SECONDS)
+        elif _probe("hg status", root, hg, "-R", root, "status").strip():
+            status = "*"
+    elif info.vcs == "jj":
+        if info.backend in ("", "git"):
+            if need_behind:
+                tmpl = ('if(self.contained_in("@"), "@" ++ ' + JJ_DIRTY +
+                        ' ++ "\\n", if(self.contained_in("ancestors(@)"), '
+                        '"upstream\\n", "behind\\n"))')
+                out = _probe("jj log", root, "jj", "-R", root, "log",
+                             "--no-graph", "-r", "@ | remote_bookmarks()",
+                             "-T", tmpl)
+                lines = out.split("\n")
+                status = "*" if "@*" in lines else ""
+                behind = "behind" in lines or _older_than(
+                    os.path.join(jj_git_dir(root), "FETCH_HEAD"),
+                    STALE_SECONDS)
+            else:
+                status = _probe("jj log", root, "jj", "-R", root, "log",
+                                "--no-graph", "-r", "@", "-T", JJ_DIRTY)
+        else:
+            if need_status:
+                status = _probe("jj log", root, "jj", "-R", root, "log",
+                                "--no-graph", "-r", "@", "-T", JJ_DIRTY)
+            if need_behind:
+                marker = os.path.join(root, JJ_SYNC_MARKER)
+                if not os.path.exists(marker):
+                    seed_sync_marker(root, marker)
+                behind = (not os.path.exists(marker)
+                          or _older_than(marker, STALE_SECONDS))
+    if status != "*":
+        status = ""
+    return status, behind
+
+
+def gather(info, fields, hg_path=""):
+    r = PromptResult()
+    if "project" in fields:
+        r.project = os.path.basename(info.root) or info.root
+    if "subdir" in fields:
+        rel = os.path.relpath(getwd(), info.root) if info.root else "."
+        r.subdir = "" if rel == "." else rel
+    if "branch" in fields:
+        if info.vcs == "git":
+            r.branch = git_branch(info.root)
+        elif info.vcs == "hg":
+            r.branch = read_first_line(
+                os.path.join(info.root, ".hg", "branch")) or "default"
+    if "status" in fields or "behind" in fields:
+        status, behind = status_and_behind(info, hg_path, "status" in fields,
+                                           "behind" in fields)
+        if "status" in fields:
+            r.status = status
+        if "behind" in fields:
+            r.behind = behind
+    return r
+
+
+def _color(text, code, color):
+    if not color or not text:
+        return text
+    return "\033[%sm%s\033[0m" % (code, text)
+
+
+def format_prompt(r, fmt, color):
+    s = fmt.replace("\\n", "\n").replace("\\t", "\t")
+    for name, value in (
+            ("project", _color(r.project, "32", color)),
+            ("subdir", _color(r.subdir, "34", color)),
+            ("branch", r.branch),
+            ("status", _color(r.status, "33", color)),
+            ("behind", _color("pull" if r.behind else "", "33", color))):
+        s = s.replace("{" + name + "}", value)
+    lines = []
+    for line in s.split("\n"):
+        while "  " in line:
+            line = line.replace("  ", " ")
+        lines.append(line.rstrip(" "))
+    return "\n".join(lines).rstrip("\n")
+
+
+def color_mode(mode):
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    return sys.stdout.isatty()
+
+
+def _flag_value(args, i, name):
+    """(value, next index) if args[i] is --name=V or --name V, else None."""
+    a = args[i]
+    if a.startswith("--" + name + "="):
+        return a[len(name) + 3:], i + 1
+    if a == "--" + name and i + 1 < len(args):
+        return args[i + 1], i + 2
+    return None
+
+
+def prompt_info_cmd(force, hg_path, args):
+    fmt, mode = DEFAULT_FORMAT, "auto"
+    i = 0
+    while i < len(args):
+        for name in ("hg-path", "format", "color"):
+            got = _flag_value(args, i, name)
+            if got is not None:
+                value, i = got
+                if name == "hg-path":
+                    hg_path = value
+                elif name == "format":
+                    fmt = value
+                else:
+                    mode = value
+                break
+        else:
+            raise Error("unknown flag: %s" % args[i], "vcs prompt-info")
+    info = detect_or_exit(force)
+    result = gather(info, parse_fields(fmt), hg_path)
+    print(format_prompt(result, fmt, color_mode(mode)))
+    return 0
+
+
+# --- prompt-line -------------------------------------------------------------
+
+def ssh_agent_has_keys(sock, timeout=0.5):
+    """One REQUEST_IDENTITIES round trip to the agent at sock."""
+    if not sock:
+        return False
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(sock)
+        s.sendall(b"\0\0\0\1\x0b")
+        data = b""
+        while len(data) < 9:
+            chunk = s.recv(9 - len(data))
+            if not chunk:
+                return False
+            data += chunk
+    except (OSError, socket.timeout):
+        return False
+    finally:
+        s.close()
+    length, kind, nkeys = struct.unpack(">IBI", data)
+    return length >= 5 and kind == 12 and nkeys > 0
+
+
+def tilde(cwd, home):
+    if not home:
+        return cwd
+    if cwd == home:
+        return "~"
+    if cwd.startswith(home + "/"):
+        return "~" + cwd[len(home):]
+    return cwd
+
+
+def prompt_line_cmd(force, hg_path, args):
+    hostname = ""
+    production = False
+    shpool = os.environ.get("SHPOOL_SESSION_NAME", "")
+    fmt, mode, check_ssh = DEFAULT_FORMAT, "auto", True
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--production":
+            production, i = True, i + 1
+            continue
+        if a == "--no-ssh":
+            check_ssh, i = False, i + 1
+            continue
+        for name in ("hostname", "shpool", "hg-path", "format", "color"):
+            got = _flag_value(args, i, name)
+            if got is not None:
+                value, i = got
+                if name == "hostname":
+                    hostname = value
+                elif name == "shpool":
+                    shpool = value
+                elif name == "hg-path":
+                    hg_path = value
+                elif name == "format":
+                    fmt = value
+                else:
+                    mode = value
+                break
+        else:
+            raise Error("unknown flag: %s" % a, "vcs prompt-line")
+    if not hostname:
+        hostname = (os.environ.get("HOSTNAME") or socket.gethostname()
+                    ).split(".")[0]
+    color = color_mode(mode)
+
+    host = hostname
+    if color and production:
+        host = "\033[31m%s\033[0m" % host
+    if shpool:
+        tag = " [" + _color(shpool, "32", color) + "]"
+    else:
+        tag = " " + _color("shpool", "33", color)
+
+    cwd = getwd()
+    home = os.environ.get("HOME", "")
+    err = None
+    info = detect(cwd)
+    if force:
+        info = info or Info(force, root=cwd)
+        info.vcs = force
+    if info is None:
+        directory = tilde(cwd, home)
+    else:
+        try:
+            directory = format_prompt(
+                gather(info, parse_fields(fmt), hg_path), fmt, color)
+        except Error as e:
+            directory, err = "", e
+        directory = directory or tilde(cwd, home)
+    if color:
+        directory = "\033[34m%s\033[0m" % directory
+
+    line = host + tag + " " + directory
+    if check_ssh and not ssh_agent_has_keys(
+            os.environ.get("SSH_AUTH_SOCK", "")):
+        line += " " + _color("SSH", "33", color)
+    if err is not None:
+        sys.stderr.write("vcs prompt-line: %s\n" % err)
+    print(line)
+    return 0
+
+
+# --- main ----------------------------------------------------------------------
+
+def version_info():
+    commit, date = COMMIT, DATE
+    if commit.startswith("@"):
+        here = os.path.dirname(os.path.realpath(__file__))
+        out = try_capture("git", "-C", here, "log", "-1", "--format=%H %cI")
+        commit, date = out.split(" ", 1) if out else ("unknown", "unknown")
+    return commit, date
+
+
+def detect_or_exit(force):
+    info = detect(getwd())
+    if force:
+        info = info or Info(force)
+        info.vcs = force
+        return info
+    if info is None:
+        sys.stderr.write("vcs: no version control system detected\n")
+        sys.exit(1)
+    return info
+
+
+def main(argv):
+    global DRY_RUN
+    force, hg_path = "", ""
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("--vcs="):
+            force, i = a[len("--vcs="):], i + 1
+        elif a == "--vcs" and i + 1 < len(argv):
+            force, i = argv[i + 1], i + 2
+        elif a.startswith("--hg-path="):
+            hg_path, i = a[len("--hg-path="):], i + 1
+        elif a == "--hg-path" and i + 1 < len(argv):
+            hg_path, i = argv[i + 1], i + 2
+        elif a in ("-n", "--dry-run", "--simulate"):
+            DRY_RUN, i = True, i + 1
+        elif a in ("--version", "-V"):
+            print("vcs portable (commit %s, built %s)" % version_info())
+            return 0
+        else:
+            break
+    if DRY_RUN:
+        os.environ["VCS_DRY_RUN"] = "1"
+    rest = argv[i:]
+    if not rest:
+        sys.stderr.write("usage: vcs [--vcs=NAME] [--hg-path=PATH] "
+                         "[-n|--dry-run] <subcommand> [args...]\n")
+        return 1
+    sub, args = rest[0], rest[1:]
+
+    if sub == "--list-commands":
+        print("\n".join(COMMANDS))
+        return 0
+    if sub == "version":
+        print("vcs\nversion: portable\ncommit:  %s\nbuilt:   %s"
+              % version_info())
+        return 0
+    if sub == "detect":
+        if len(args) > 1:
+            raise Error("too many arguments", "vcs detect")
+        directory = getwd()
+        if args:
+            try:
+                st = os.stat(args[0])
+            except OSError as e:
+                raise Error("stat %s: %s" % (args[0], e.strerror), "vcs detect")
+            directory = args[0] if stat.S_ISDIR(st.st_mode) \
+                else os.path.dirname(args[0]) or "."
+        info = detect(directory)
+        if force:
+            print(force)
+        elif info is None:
+            sys.stderr.write("vcs: no version control system detected\n")
+            return 1
+        else:
+            print(info.vcs)
+        return 0
+    if sub == "rootdir":
+        root = detect_or_exit(force).root
+        for a in args or [""]:
+            print(os.path.normpath(root + "/" + a) if a else root)
+        return 0
+    if sub in ("backend", "hosting"):
+        info = detect_or_exit(force)
+        value = info.backend if sub == "backend" else info.hosting
+        if value:
+            print(value)
+        return 0
+    if sub == "prompt-info":
+        return prompt_info_cmd(force, hg_path, args)
+    if sub == "prompt-line":
+        return prompt_line_cmd(force, hg_path, args)
+    if sub == "auto-fetch":
+        # Background fetching is off in the portable version (TODO.md).
+        if "--verbose" in args or "-v" in args:
+            print("disabled")
+        return 0
+    if sub == "clearcache":
+        for d, _, files in os.walk("."):
+            if ".vcs_cache" in files:
+                try:
+                    os.remove(os.path.join(d, ".vcs_cache"))
+                except OSError:
+                    pass  # As the Go version: skip what can't be removed.
+        return 0
+
+    info = detect_or_exit(force)
+    if info.vcs == "git":
+        backend = Git(info)
+    elif info.vcs == "hg":
+        backend = Hg(info, hg_path)
+    elif info.vcs == "jj":
+        backend = Jj(info)
+    elif info.vcs == "p4":
+        backend = P4(info)
+    else:
+        raise Error("unsupported VCS: %s" % info.vcs)
+    try:
+        return backend.dispatch(sub, args)
+    except Error as e:
+        raise Error("%s" % e, "vcs-" + backend.name)
+
+
+def entry():
+    try:
+        rc = main(sys.argv[1:])
+    except Error as e:
+        prog = e.args[1] if len(e.args) > 1 else "vcs"
+        sys.stderr.write("%s: %s\n" % (prog, e.args[0]))
+        rc = 1
+    except Failed as e:
+        if e.stderr:
+            sys.stderr.write(e.stderr if e.stderr.endswith("\n")
+                             else e.stderr + "\n")
+        rc = e.code
+    except KeyboardInterrupt:
+        rc = 130
+    try:
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # Output went to a closed pipe (e.g. `| head`): nothing more to show.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    sys.exit(rc)
+
+
+if __name__ == "__main__":
+    entry()

@@ -1,0 +1,585 @@
+#!/bin/sh
+#
+# vcs: the portable front end, for machines that can't run the Go binaries.
+#
+# The subcommands a shell prompt runs (detect, rootdir, backend, hosting,
+# prompt-info, unmerged, clearcache, auto-fetch, --list-commands) are handled
+# here in POSIX sh, so the prompt never pays Python's startup. Everything
+# else, and the rarer forms of those (a path argument, a VCS forced outside a
+# repository), is handed to vcs-py, which implements every subcommand.
+#
+# Where this differs from the Go vcs, on purpose:
+#   - prompt-info's {behind} ("pull") is also shown when the last fetch is
+#     more than 4 hours old, because there is no background auto-fetch.
+#   - On a non-git jj backend (e.g. piper) {behind} reads the mtime of
+#     .jj/vcs-synced, which `vcs pull` and `vcs fastforward` update, instead
+#     of searching `jj op log`. A sync run another way shows "pull" until the
+#     next `vcs pull`.
+#   - auto-fetch does nothing.
+# SPEC.md has the details.
+
+_nl='
+'
+# jj template: the local end time, as `touch -t` takes it, of each operation
+# that brought in upstream changes, newest first. Kept equal to vcs-py's.
+_JJ_SYNC_TIMES='if(description.lower().contains("fetch") || description.lower().contains("sync") || description.lower().contains("pull") || description.lower().contains("import"), self.time().end().local().format("%Y%m%d%H%M.%S") ++ "\n")'
+_tab='	'
+
+# Where vcs-py lives: beside this script, unless $VCS_PY says otherwise.
+case $0 in
+    */*) _vcs_py=${VCS_PY:-${0%/*}/vcs-py} ;;
+    *) _vcs_py=${VCS_PY:-vcs-py} ;;
+esac
+
+# Hand over to vcs-py: _py_as_given with the original arguments, _py with
+# a subcommand and its arguments (the leading flags are added back).
+_py_as_given() {
+    exec "$_vcs_py" "$@"
+}
+
+_py() {
+    exec "$_vcs_py" ${_force:+"--vcs=$_force"} ${_hgpath:+"--hg-path=$_hgpath"} "$@"
+}
+
+_die() {
+    printf '%s\n' "$*" >&2
+    exit 1
+}
+
+# _subst STRING OLD NEW: every OLD in STRING replaced by NEW, left in $_r.
+_subst() {
+    _r=
+    _s=$1
+    while :; do
+        case $_s in
+            *"$2"*)
+                _r=$_r${_s%%"$2"*}$3
+                _s=${_s#*"$2"}
+                ;;
+            *) break ;;
+        esac
+    done
+    _r=$_r$_s
+}
+
+# Print a command the way `set -x` would, matching the Go runner's quoting.
+_print_command() {
+    _line=+
+    for _a do
+        case $_a in
+            '') _a="''" ;;
+            *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._:=,@+%-]*)
+                _subst "$_a" "'" "'\\''"
+                _a="'$_r'"
+                ;;
+        esac
+        _line="$_line $_a"
+    done
+    printf '%s\n' "$_line" >&2
+}
+
+# Run a command, or only print it under --dry-run.
+_run() {
+    if $_dry; then
+        _print_command "$@"
+        return 0
+    fi
+    "$@"
+}
+
+# First line of FILE, with surrounding whitespace trimmed, in $_r.
+_read_line() {
+    _r=
+    test -f "$1" && read -r _r <"$1"
+    test -n "$_r"
+}
+
+# --- detection: the same rules and .vcs_cache format as vcsdetect ---------
+
+# _detect DIR: sets _vcs _backend _hosting _root, or returns 1.
+_detect() {
+    _vcs='' _backend='' _hosting='' _root=''
+    if test -f "$1/.vcs_cache" &&
+        { read -r _vcs _backend _hosting _rest && IFS= read -r _root; } \
+            <"$1/.vcs_cache" 2>/dev/null &&
+        test -n "$_hosting"; then
+        test "$_backend" = - && _backend=
+        test "$_hosting" = - && _hosting=
+        return 0
+    fi
+    _vcs='' _backend='' _hosting='' _root=''
+    _d=$1
+    while :; do
+        if test -e "$_d/.jj"; then _vcs=jj
+        elif test -e "$_d/.hg"; then _vcs=hg
+        elif test -e "$_d/.git"; then _vcs=git
+        elif test -e "$_d/.citc" || test -e "$_d/.p4config"; then _vcs=p4
+        fi
+        test -n "$_vcs" && break
+        test "$_d" = / && return 1
+        _d=${_d%/*}
+        test -z "$_d" && _d=/
+    done
+    _root=$_d
+    case $_vcs in
+        jj)
+            _jj_repo_dir "$_root"
+            _read_line "$_r/store/type" && _backend=$_r
+            ;;
+        git) _backend=git ;;
+    esac
+    if test "$_backend" = git; then
+        if test "$_vcs" = jj; then
+            _jj_git_dir "$_root"
+            _git_hosting "$_r/config"
+        else
+            _git_dir "$_root"
+            _gd=$_r
+            if _read_line "$_gd/commondir"; then
+                case $_r in /*) _gd=$_r ;; *) _gd=$_gd/$_r ;; esac
+            fi
+            _git_hosting "$_gd/config"
+        fi
+    fi
+    { printf '%s %s %s\n%s\n' "$_vcs" "${_backend:--}" "${_hosting:--}" \
+        "$_root" >"$1/.vcs_cache"; } 2>/dev/null
+    return 0
+}
+
+# A jj workspace's repo directory. In a secondary workspace .jj/repo is a
+# file holding the path to the main workspace's repo, relative to .jj.
+_jj_repo_dir() {
+    _r=$1/.jj/repo
+    if test -f "$_r"; then
+        read -r _r <"$_r"
+        case $_r in /*) ;; *) _r=$1/.jj/$_r ;; esac
+    fi
+}
+
+# The git directory backing the jj repo at $1, as vcsdetect.JJGitDir.
+_jj_git_dir() {
+    _jj_repo_dir "$1"
+    _store=$_r/store
+    if _read_line "$_store/git_target"; then
+        case $_r in /*) ;; *) _r=$_store/$_r ;; esac
+    elif test -d "$1/.git"; then
+        _r=$1/.git
+    else
+        _r=$_store/git
+    fi
+}
+
+# The (per-worktree) git directory for the checkout at $1.
+_git_dir() {
+    _r=$1/.git
+    if test -f "$_r"; then
+        read -r _r <"$_r"
+        _r=${_r#gitdir: }
+        case $_r in /*) ;; *) _r=$1/$_r ;; esac
+    fi
+}
+
+# Hosting from the origin URL in the git config file $1.
+_git_hosting() {
+    test -f "$1" || return 0
+    _in_origin=false
+    while read -r _l; do
+        case $_l in
+            '[remote "origin"]') _in_origin=true; continue ;;
+            '['*) _in_origin=false; continue ;;
+        esac
+        $_in_origin || continue
+        case $_l in
+            url*=*)
+                _u=${_l#*=}
+                case $_u in
+                    *github.com*) _hosting=github ;;
+                    *gitlab.com*|*gitlab.*) _hosting=gitlab ;;
+                    *bitbucket.org*) _hosting=bitbucket ;;
+                    *sr.ht*) _hosting=sourcehut ;;
+                    *googlesource.com*) _hosting=gerrit ;;
+                esac
+                return 0
+                ;;
+        esac
+    done <"$1"
+}
+
+# Detect in $PWD, honoring --vcs. Exits like the Go vcs when there's no repo.
+_detect_here() {
+    if _detect "$PWD"; then
+        test -n "$_force" && _vcs=$_force
+        return 0
+    fi
+    test -n "$_force" && _py "$@"
+    _die "vcs: no version control system detected"
+}
+
+# --- prompt-info -----------------------------------------------------------
+
+# Is FILE older than MINUTES? A missing file is not.
+_older_than() {
+    test -n "$(find "$1" -mmin +"$2" 2>/dev/null)"
+}
+
+_hg_cmd() {
+    if test -n "$_hgpath"; then
+        _hg=$_hgpath
+    elif _hg=$(command -v chg 2>/dev/null); then
+        :
+    else
+        _hg=hg
+    fi
+}
+
+# _git_quiet ARGS: git in the repo, with no repository-state variables
+# inherited from a surrounding hook.
+_git_quiet() {
+    (
+        unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_NAMESPACE GIT_PREFIX \
+            GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+        exec git -C "$_root" "$@"
+    )
+}
+
+_branch() {
+    _branch=
+    case $_vcs in
+        git)
+            _git_dir "$_root"
+            _read_line "$_r/HEAD" || return 0
+            case $_r in
+                'ref: refs/heads/.invalid')
+                    # reftable: HEAD is a placeholder, so ask git.
+                    if _r=$(_git_quiet symbolic-ref --quiet HEAD 2>&1); then
+                        case $_r in refs/heads/*) _branch=${_r#refs/heads/} ;; esac
+                    elif test $? -ne 1 ||
+                        ! _r=$(_git_quiet rev-parse --symbolic-full-name HEAD 2>&1); then
+                        _die "vcs prompt-info: git in ${_root##*/}: $_r"
+                    fi
+                    ;;
+                'ref: refs/heads/'*) _branch=${_r#ref: refs/heads/} ;;
+            esac
+            ;;
+        hg)
+            if _read_line "$_root/.hg/branch"; then
+                _branch=$_r
+            else
+                _branch=default
+            fi
+            ;;
+    esac
+}
+
+# A workspace `vcs pull` hasn't synced yet has no marker: date one from the
+# last sync in jj's operation log, once, so a new workspace isn't reminded
+# for nothing. With no sync recorded the marker is dated 2000, and the
+# reminder shows. If jj fails, its error is shown, no marker is made, and the
+# next prompt asks again.
+_seed_sync_marker() {
+    if ! _when=$(jj -R "$_root" op log --no-graph --ignore-working-copy \
+            -T "$_JJ_SYNC_TIMES"); then
+        printf 'vcs prompt-info: jj op log in %s failed, so the last sync is unknown\n' \
+            "${_root##*/}" >&2
+        return 0
+    fi
+    _when=${_when%%"$_nl"*}
+    touch -t "${_when:-200001010000}" "$_root/.jj/vcs-synced" 2>/dev/null
+}
+
+# A status probe failed: its own error has gone to stderr; say what that
+# leaves unknown. The prompt still renders, without status or "pull".
+_probe_failed() {
+    printf 'vcs prompt-info: %s in %s failed, so its status is unknown\n' \
+        "$1" "${_root##*/}" >&2
+    _status='' _behind=false
+}
+
+# Sets $_status ("*" or "") and $_behind (true/false).
+_status_behind() {
+    _status='' _behind=false
+    case $_vcs in
+        git)
+            _out=$(git -C "$_root" status --branch --porcelain \
+                --untracked-files=all) || { _probe_failed "git status"; return 0; }
+            case $_out in *"$_nl"*) _status='*' ;; esac
+            case ${_out%%"$_nl"*} in *...*'behind '*) _behind=true ;; esac
+            if $_need_behind && ! $_behind; then
+                _git_dir "$_root"
+                _older_than "$_r/FETCH_HEAD" 240 && _behind=true
+            fi
+            ;;
+        hg)
+            _hg_cmd
+            if $_need_behind; then
+                _out=$("$_hg" -R "$_root" summary) ||
+                    { _probe_failed "hg summary"; return 0; }
+                while IFS= read -r _l; do
+                    case $_l in
+                        commit:*)
+                            _l=${_l#commit:}
+                            _l=${_l# }
+                            case $_l in '(clean)'|'(clean) '*) ;; *) _status='*' ;; esac
+                            ;;
+                        update:*)
+                            _l=${_l#update:}
+                            _l=${_l# }
+                            case $_l in ''|'(current)') ;; *) _behind=true ;; esac
+                            ;;
+                    esac
+                done <<EOF
+$_out
+EOF
+                $_need_status || _status=
+                $_behind || ! _older_than "$_root/.hg/store/00changelog.i" 240 ||
+                    _behind=true
+            else
+                _out=$("$_hg" -R "$_root" status) ||
+                    { _probe_failed "hg status"; return 0; }
+                test -n "$_out" && _status='*'
+            fi
+            ;;
+        jj)
+            # One jj call answers both questions: "*" on @'s line when it is
+            # undescribed and changes files, then "upstream" or "behind" for
+            # each fetched remote bookmark, by whether @ contains it.
+            _t='if(description, "", if(empty, "", "*"))'
+            case $_backend in
+                ''|git)
+                    if $_need_behind; then
+                        _out=$(jj -R "$_root" log --no-graph \
+                            -r '@ | remote_bookmarks()' -T \
+                            'if(self.contained_in("@"), "@" ++ '"$_t"' ++ "\n", if(self.contained_in("ancestors(@)"), "upstream\n", "behind\n"))') ||
+                            { _probe_failed "jj log"; return 0; }
+                        case $_out in *'@*'*) _status='*' ;; esac
+                        case $_nl$_out$_nl in *"${_nl}behind$_nl"*) _behind=true ;; esac
+                        if ! $_behind; then
+                            _jj_git_dir "$_root"
+                            _older_than "$_r/FETCH_HEAD" 240 && _behind=true
+                        fi
+                    else
+                        _status=$(jj -R "$_root" log --no-graph -r @ -T "$_t") ||
+                            { _probe_failed "jj log"; return 0; }
+                    fi
+                    ;;
+                *)
+                    # A fast-moving backend: "pull" when `vcs pull` hasn't
+                    # synced this workspace in 4 hours.
+                    if $_need_status; then
+                        _status=$(jj -R "$_root" log --no-graph -r @ -T "$_t") ||
+                            { _probe_failed "jj log"; return 0; }
+                    fi
+                    if $_need_behind; then
+                        test -e "$_root/.jj/vcs-synced" || _seed_sync_marker
+                        test -n "$(find "$_root/.jj/vcs-synced" -mmin -240 2>/dev/null)" ||
+                            _behind=true
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
+    test "$_status" = '*' || _status=
+}
+
+_prompt_info() {
+    _format='{project} {subdir} {branch} {status} {behind}'
+    _cmode=auto
+    while test $# -gt 0; do
+        case $1 in
+            --hg-path=*) _hgpath=${1#*=} ;;
+            --format=*) _format=${1#*=} ;;
+            --color=*) _cmode=${1#*=} ;;
+            --hg-path|--format|--color)
+                test $# -ge 2 || _die "vcs prompt-info: unknown flag: $1"
+                case $1 in
+                    --hg-path) _hgpath=$2 ;;
+                    --format) _format=$2 ;;
+                    --color) _cmode=$2 ;;
+                esac
+                shift
+                ;;
+            *) _die "vcs prompt-info: unknown flag: $1" ;;
+        esac
+        shift
+    done
+    case $_cmode in
+        always) _color=true ;;
+        never) _color=false ;;
+        *) if test -t 1; then _color=true; else _color=false; fi ;;
+    esac
+
+    if ! _detect "$PWD"; then
+        test -n "$_force" && _py prompt-info --format="$_format" --color="$_cmode"
+        _die "vcs: no version control system detected"
+    fi
+    test -n "$_force" && _vcs=$_force
+    case $_root in /|'') _py prompt-info --format="$_format" --color="$_cmode" ;; esac
+    case $PWD in
+        "$_root") _subdir= ;;
+        "$_root"/*) _subdir=${PWD#"$_root"/} ;;
+        *) _py prompt-info --format="$_format" --color="$_cmode" ;;
+    esac
+
+    _need_status=false
+    _need_behind=false
+    case $_format in *'{status}'*) _need_status=true ;; esac
+    case $_format in *'{behind}'*) _need_behind=true ;; esac
+
+    _project=${_root##*/}
+    _branch=
+    case $_format in *'{branch}'*) _branch ;; esac
+    _status='' _behind=false
+    if $_need_status || $_need_behind; then
+        _status_behind
+    fi
+    _pull=
+    $_behind && _pull=pull
+
+    if $_color; then
+        _e=$(printf '\033')
+        test -n "$_project" && _project="${_e}[32m${_project}${_e}[0m"
+        test -n "$_subdir" && _subdir="${_e}[34m${_subdir}${_e}[0m"
+        test -n "$_status" && _status="${_e}[33m${_status}${_e}[0m"
+        test -n "$_pull" && _pull="${_e}[33m${_pull}${_e}[0m"
+    fi
+
+    _subst "$_format" '\n' "$_nl"
+    _subst "$_r" '\t' "$_tab"
+    _subst "$_r" '{project}' "$_project"
+    _subst "$_r" '{subdir}' "$_subdir"
+    _subst "$_r" '{branch}' "$_branch"
+    _subst "$_r" '{status}' "$_status"
+    _subst "$_r" '{behind}' "$_pull"
+    _s=$_r
+    while case $_s in *'  '*) true ;; *) false ;; esac; do
+        _subst "$_s" '  ' ' '
+        _s=$_r
+    done
+    # Trim each line's trailing spaces, then the trailing empty lines.
+    _o=
+    while :; do
+        case $_s in
+            *"$_nl"*) _l=${_s%%"$_nl"*}; _s=${_s#*"$_nl"} ;;
+            *) _l=$_s; _s= ;;
+        esac
+        while case $_l in *' ') true ;; *) false ;; esac; do _l=${_l% }; done
+        if test -z "$_s"; then
+            _o=$_o$_l
+            break
+        fi
+        _o=$_o$_l$_nl
+    done
+    while case $_o in *"$_nl") true ;; *) false ;; esac; do _o=${_o%"$_nl"}; done
+    printf '%s\n' "$_o"
+}
+
+# --- unmerged --------------------------------------------------------------
+
+_unmerged() {
+    case $_vcs in
+        git)
+            _base=
+            if _r=$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null) &&
+                test "$_r" != origin/HEAD; then
+                _base=$_r
+            elif git rev-parse --verify origin/main >/dev/null 2>&1; then
+                _base=origin/main
+            elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+                _base=origin/master
+            fi
+            _run git --no-pager branch -v --no-merged ${_base:+"$_base"} "$@"
+            ;;
+        hg)
+            if test -z "$_hgpath" && ! command -v chg >/dev/null 2>&1; then
+                echo "vcs-hg: warning: chg not found, falling back to hg (expect slower performance)" >&2
+            fi
+            _hg_cmd
+            _run "$_hg" --pager never log -r 'bookmark() and draft() and not obsolete()' \
+                --template "{bookmarks}$_tab{node|short} {desc|firstline}$_nl" "$@"
+            ;;
+        jj)
+            _run jj --no-pager log --no-graph -r 'bookmarks() & mutable() ~ empty()' \
+                --template 'bookmarks.join(", ") ++ "\t" ++ change_id.shortest() ++ " " ++ description.first_line() ++ "\n"' "$@"
+            ;;
+        p4)
+            if command -v g4 >/dev/null 2>&1; then _p4=g4; else _p4=p4; fi
+            _run "$_p4" opened "$@"
+            ;;
+    esac
+}
+
+_list_commands() {
+    for _c in absorb add addremove amend annotate at_tip base blame branch \
+        branches change changed changelog changes checkout commit commitforce \
+        copy count describe diffedit diffs diffstat drop evolve fastforward \
+        fetchtime fix goto graft graph histedit ignore incoming lint map \
+        mergetool move next outgoing pending pick precommit presubmit prev \
+        pull push rebase recommit remove rename resolve restore revert review \
+        reword rootdir show split squash status submit submitforce track \
+        unamend uncommit undo unknown unmerged unpulled unpushed untrack \
+        upload uploadchain; do
+        printf '%s\n' "$_c"
+    done
+}
+
+# --- main ------------------------------------------------------------------
+
+_force='' _hgpath='' _dry=false
+test -n "${VCS_DRY_RUN:-}" && _dry=true
+
+# Leading flags, parsed without disturbing "$@" so vcs-py gets them as given.
+_parse() {
+    _n=0
+    while test $# -gt 0; do
+        case $1 in
+            --vcs=*) _force=${1#*=} ;;
+            --hg-path=*) _hgpath=${1#*=} ;;
+            --vcs|--hg-path)
+                test $# -ge 2 || break
+                case $1 in --vcs) _force=$2 ;; *) _hgpath=$2 ;; esac
+                shift
+                _n=$((_n + 1))
+                ;;
+            -n|--dry-run|--simulate) _dry=true ;;
+            *) break ;;
+        esac
+        shift
+        _n=$((_n + 1))
+    done
+    _sub=${1-}
+    _nargs=$#
+}
+_parse "$@"
+
+case $_sub in
+    --list-commands|clearcache|backend|hosting|prompt-info|unmerged|auto-fetch) ;;
+    detect|rootdir) test "$_nargs" -eq 1 || _py_as_given "$@" ;;
+    *) _py_as_given "$@" ;;
+esac
+
+if $_dry; then
+    VCS_DRY_RUN=1
+    export VCS_DRY_RUN
+fi
+shift "$_n"
+shift
+
+case $_sub in
+    --list-commands) _list_commands ;;
+    clearcache) find . -name .vcs_cache -type f -exec rm -f {} + 2>/dev/null; exit 0 ;;
+    auto-fetch)
+        # Background fetching is off in the portable version (TODO.md).
+        case " $* " in *' --verbose '*|*' -v '*) echo disabled ;; esac
+        exit 0
+        ;;
+    detect) _detect_here detect; printf '%s\n' "$_vcs" ;;
+    rootdir) _detect_here rootdir; printf '%s\n' "$_root" ;;
+    backend) _detect_here backend; test -z "$_backend" || printf '%s\n' "$_backend" ;;
+    hosting) _detect_here hosting; test -z "$_hosting" || printf '%s\n' "$_hosting" ;;
+    prompt-info) _prompt_info "$@" ;;
+    unmerged)
+        _detect_here unmerged "$@"
+        case $_vcs in git|hg|jj|p4) ;; *) _py unmerged "$@" ;; esac
+        _unmerged "$@"
+        ;;
+esac
