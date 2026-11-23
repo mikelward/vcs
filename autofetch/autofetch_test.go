@@ -2,6 +2,8 @@ package autofetch
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -730,4 +732,42 @@ func equalArgs(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestFetchEnvAsksNoOne runs git with fetchEnv against a server that wants
+// credentials and a core.askPass helper that records being asked: no one
+// is there to answer a background fetch's dialog, and an open one would
+// hold the fetch lock.
+func TestFetchEnvAsksNoOne(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="x"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	asked := filepath.Join(dir, "asked")
+	askpass := filepath.Join(dir, "askpass")
+	script := "#!/bin/sh\necho \"$1\" >> " + asked + "\necho x\n"
+	if err := os.WriteFile(askpass, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-c", "core.askPass="+askpass, "ls-remote", srv.URL+"/repo.git")
+	// Start from an environment with no git settings of its own (a CI or
+	// container GIT_ASKPASS would override core.askPass), as a user's is.
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") && !strings.HasPrefix(kv, "SSH_ASKPASS") {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = append(env, fetchEnv...)
+	if err := cmd.Run(); err == nil {
+		t.Error("git ls-remote succeeded against a server that wants credentials")
+	}
+	if _, err := os.Stat(asked); err == nil {
+		t.Error("the askpass helper was asked")
+	}
 }

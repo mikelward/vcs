@@ -561,6 +561,44 @@ class AutoFetchTest(Base):
         self.fetch([ALL_IMPLS[-1]], "fresh")
         self.assertFalse(os.path.exists(self.log))
 
+    def test_no_credential_dialogs(self):
+        """An askpass program (here core.askPass) must not be asked: no one
+        is there to answer it, and an open dialog holds the fetch lock."""
+        import http.server
+        import threading
+
+        class Challenge(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="x"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass  # Keep the test output clean.
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Challenge)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        asked = self.e.path("asked")
+        askpass = self.e.path("askpass")
+        with open(askpass, "w") as f:
+            f.write('#!/bin/sh\necho "$1" >> %s\necho x\n' % asked)
+        os.chmod(askpass, 0o755)
+        self.e.sh("git remote set-url origin http://127.0.0.1:%d/repo.git"
+                  " && git config core.askPass %s"
+                  % (server.server_port, askpass), self.root)
+        for impl in ALL_IMPLS:
+            with self.subTest(impl=impl_name(impl)):
+                age(self.fetch_head, 2 * HOURS)
+                self.fetch([impl], "fetched")
+        self.assertFalse(os.path.exists(asked), "askpass was asked")
+        with open(self.log) as f:
+            log = f.read()
+        self.assertEqual(log.count("proj: ended with exit status 128"),
+                         len(ALL_IMPLS), log)
+
     def test_unsupported(self):
         p4 = self.e.path("depot")
         os.mkdir(p4)
