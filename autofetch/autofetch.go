@@ -324,6 +324,15 @@ func coreSSHCommandConfigured(name string) bool {
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
+// fetchEnv is added to every background fetch's environment so nothing can
+// prompt for credentials. GIT_TERMINAL_PROMPT=0 stops prompts on the
+// terminal only: an askpass program (GIT_ASKPASS, core.askPass,
+// SSH_ASKPASS) can still open a dialog, and an unanswered one would hold
+// the fetch lock and block `vcs pull`. GIT_ASKPASS=false answers nothing
+// (it also overrides core.askPass), and SSH_ASKPASS_REQUIRE=never stops
+// ssh's.
+var fetchEnv = []string{"GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=false", "SSH_ASKPASS_REQUIRE=never"}
+
 // detachedSpawn launches name+args in a new session with no stdio,
 // then returns immediately without waiting. The child becomes its
 // own session leader (Setsid) so it isn't killed when the calling
@@ -349,7 +358,7 @@ func detachedSpawn(name string, args []string, extraFiles []*os.File) error {
 		return nil
 	}
 	cmd := exec.Command(name, args...)
-	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	env := append(os.Environ(), fetchEnv...)
 	if os.Getenv("GIT_SSH_COMMAND") == "" && os.Getenv("GIT_SSH") == "" && !coreSSHCommandConfigured(name) {
 		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
 	}

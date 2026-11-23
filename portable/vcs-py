@@ -1720,8 +1720,14 @@ def try_fetch_lock(gd):
 
 
 def fetch_env(command):
-    """The environment for a fetch no one is there to answer prompts for."""
-    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+    """The environment for a fetch no one is there to answer prompts for.
+
+    GIT_TERMINAL_PROMPT=0 stops prompts on the terminal only; an askpass
+    program (GIT_ASKPASS, core.askPass, SSH_ASKPASS) can still open a
+    dialog, so git's is replaced by `false`, which answers nothing, and
+    ssh's is turned off."""
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="false",
+               SSH_ASKPASS_REQUIRE="never")
     if (not env.get("GIT_SSH_COMMAND") and not env.get("GIT_SSH")
             and os.path.basename(command[0]) in ("git", "jj")
             and not try_capture("git", "config", "core.sshCommand")):
