@@ -52,7 +52,10 @@ Detection proceeds as follows:
    - `.hg` → hg
    - `.git` → git
    - `.citc` or `.p4config` → p4
-3. Detect backend (e.g. read `.jj/repo/store/type` for jj).
+3. Detect backend (e.g. read `.jj/repo/store/type` for jj). In a secondary
+   jj workspace (`jj workspace add`), `.jj/repo` is a file holding the path
+   of the main workspace's repo directory, relative to `.jj`; detection
+   follows it.
 4. Detect hosting by parsing the git remote origin URL from `.git/config`.
 5. Write `.vcs_cache` (best-effort, ignores write failures on read-only filesystems).
 
@@ -253,9 +256,6 @@ script starts no processes.
   whose description mentions a fetch, sync, pull or import (2000 if none
   does, so the reminder shows). If jj fails, its error is shown with what
   failed, no marker is made, and the next prompt asks again.
-- In a secondary jj workspace, where `.jj/repo` is a file holding the path of
-  the main workspace's repo relative to `.jj`, detection follows it to find
-  the backend.
 
 When a status probe (`git status`, `hg summary`, `hg status`, `jj log`)
 fails, its error goes to stderr with a line saying which probe failed, and

@@ -334,3 +334,35 @@ func TestDetectHostingFromConfig(t *testing.T) {
 		t.Errorf("expected github hosting, got %q", info.Hosting)
 	}
 }
+
+// A secondary jj workspace (`jj workspace add`) has a .jj/repo file holding
+// the path of the main workspace's repo directory, relative to .jj. Its
+// backend, hosting and backing git directory are the main workspace's.
+func TestDetectJJSecondaryWorkspace(t *testing.T) {
+	base := t.TempDir()
+	store := filepath.Join(base, "main", ".jj", "repo", "store")
+	if err := os.MkdirAll(filepath.Join(store, "git"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(store, "type"), []byte("git\n"), 0644)
+	os.WriteFile(filepath.Join(store, "git_target"), []byte("git"), 0644)
+	os.WriteFile(filepath.Join(store, "git", "config"),
+		[]byte("[remote \"origin\"]\n\turl = https://github.com/example/repo.git\n"), 0644)
+
+	second := filepath.Join(base, "second")
+	if err := os.MkdirAll(filepath.Join(second, ".jj"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(second, ".jj", "repo"), []byte("../../main/.jj/repo"), 0644)
+
+	info, err := Detect(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.VCS != "jj" || info.Backend != "git" || info.Hosting != "github" || info.RootDir != second {
+		t.Errorf("unexpected info: %+v", info)
+	}
+	if got, want := JJGitDir(second), filepath.Join(store, "git"); got != want {
+		t.Errorf("JJGitDir = %q, want %q", got, want)
+	}
+}
