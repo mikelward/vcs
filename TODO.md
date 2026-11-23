@@ -63,13 +63,14 @@ already answered and recorded, never for one nobody has read.
 
 **Decided:** in `portable/`, `pull` also shows when the last fetch is over 4
 hours old, and a non-git jj backend reads a `.jj/vcs-synced` marker that
-`vcs pull` and `vcs fastforward` keep. The Go `prompt-info` is unchanged.
+`vcs pull`, `vcs fastforward` and auto-fetch keep. The Go `prompt-info` is
+unchanged.
 
 **Alternative:** apply the 4-hour rule to the Go version too, so the prompt
 means the same thing whichever is installed.
 
-**Why this way:** the rule stands in for the background fetch the portable
-version doesn't do. The Go version still auto-fetches, and its tests pin
+**Why this way:** the portable rule still reminds when auto-fetch can't run
+(the shell hooks skip it without an SSH identity). The Go version's tests pin
 "an up-to-date upstream with an old `FETCH_HEAD` is not behind" on purpose.
 
 **Reversible:** both are a few lines in `status_and_behind` (vcs-py) and
@@ -77,13 +78,11 @@ version doesn't do. The Go version still auto-fetches, and its tests pin
 
 ## Later
 
-- Reconsider background fetching. The portable `auto-fetch` does nothing;
-  decide whether to bring it back there, or drop it from the Go version and
-  from conf's shell hooks too.
 - Consider a background catch-up for the piper sync marker: when it looks
   stale, run `jj op log --ignore-working-copy` in the background (at most
-  every 10 minutes) and set the marker's mtime to the last sync it records,
-  so a sync run outside `vcs pull` clears the reminder.
+  every 10 minutes) and set the marker's mtime to the last sync it records.
+  Auto-fetch now syncs a stale workspace hourly, so this would only clear
+  the reminder sooner after a `jj sync` run by hand.
 
 - Add the three ruleset settings this setup expects: require `codex` (not
   `sweep`), require `codex-review-check / codex-review-check`, and require
