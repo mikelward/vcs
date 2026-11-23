@@ -990,3 +990,67 @@ func stringSliceEqual(a, b []string) bool {
 	}
 	return true
 }
+
+// A status probe that fails leaves status and behind unknown: Gather still
+// returns the other fields, reports the failure in ProbeErr with the VCS's
+// own diagnostic, and shows neither "*" nor "pull" (not even from a stale
+// fetch marker), rather than presenting the checkout as clean.
+func TestGatherGitStatusFailureIsReported(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	tmp := initGitRepo(t)
+	if err := os.WriteFile(filepath.Join(tmp, ".git", "index"), []byte("not an index"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	fetchPath := filepath.Join(tmp, ".git", "FETCH_HEAD")
+	os.WriteFile(fetchPath, []byte("test"), 0644)
+	old := time.Now().Add(-25 * time.Hour)
+	os.Chtimes(fetchPath, old, old)
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: tmp}
+	fields := map[string]bool{"project": true, "status": true, "behind": true}
+	result, err := Gather(info, fields, nil)
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+	if result.Project != filepath.Base(tmp) {
+		t.Errorf("Project = %q, want %q", result.Project, filepath.Base(tmp))
+	}
+	if result.Status != "" || result.Behind {
+		t.Errorf("Status = %q, Behind = %v; want both unknown (empty)", result.Status, result.Behind)
+	}
+	if result.ProbeErr == nil {
+		t.Fatal("ProbeErr = nil, want the git status failure")
+	}
+	msg := result.ProbeErr.Error()
+	for _, want := range []string{"git status in " + filepath.Base(tmp) + " failed", "fatal:"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("ProbeErr = %q, want it to contain %q", msg, want)
+		}
+	}
+}
+
+func TestGatherHgStatusFailureIsReported(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".hg"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(t.TempDir(), "fakehg")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho 'abort: broken' >&2\nexit 255\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	info := &vcsdetect.Info{VCS: "hg", RootDir: root}
+	for _, fields := range []map[string]bool{{"status": true}, {"status": true, "behind": true}} {
+		result, err := Gather(info, fields, &Options{HgPath: fake})
+		if err != nil {
+			t.Fatalf("Gather() error: %v", err)
+		}
+		if result.ProbeErr == nil || !strings.Contains(result.ProbeErr.Error(), "abort: broken") {
+			t.Errorf("fields %v: ProbeErr = %v, want hg's abort message", fields, result.ProbeErr)
+		}
+		if result.Status != "" || result.Behind {
+			t.Errorf("fields %v: Status = %q, Behind = %v; want both unknown", fields, result.Status, result.Behind)
+		}
+	}
+}

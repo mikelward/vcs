@@ -204,9 +204,9 @@ func dirPart(opts *Options) (string, error) {
 	}
 	out := promptinfo.Format(result, format, opts.Color)
 	if out == "" {
-		return wrapBlue(TildeDirectory(cwd, home), opts.Color), nil
+		return wrapBlue(TildeDirectory(cwd, home), opts.Color), result.ProbeErr
 	}
-	return wrapBlue(out, opts.Color), nil
+	return wrapBlue(out, opts.Color), result.ProbeErr
 }
 
 func noVCSFallback(cwd, home string, color bool) string {

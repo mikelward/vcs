@@ -38,6 +38,9 @@ type Result struct {
 	Branch  string // current branch (empty for jj)
 	Status  string // "*" if there are uncommitted changes, else ""
 	Behind  bool   // git-backed: upstream has commits we don't, or (no upstream) FETCH_HEAD is stale. Fast-moving backends (e.g. piper): last sync is older than fetchStaleThreshold.
+	// ProbeErr is set when the status probe failed; Status and Behind are
+	// then unknown and left empty. The other fields are still good.
+	ProbeErr error
 }
 
 // ParseFields extracts {field} names from a format string.
@@ -69,11 +72,12 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 	var wg sync.WaitGroup
 	var sbStatus string
 	var sbBehind, sbHasUpstream bool
+	var sbErr error
 	if fields["status"] || fields["behind"] {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sbStatus, sbBehind, sbHasUpstream = getStatusAndBehind(info, opts, fields["status"], fields["behind"])
+			sbStatus, sbBehind, sbHasUpstream, sbErr = getStatusAndBehind(info, opts, fields["status"], fields["behind"])
 		}()
 	}
 
@@ -100,6 +104,7 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 	if branchErr != nil {
 		return nil, branchErr
 	}
+	r.ProbeErr = sbErr
 	if fields["status"] {
 		r.Status = sbStatus
 	}
@@ -287,11 +292,23 @@ func getBranch(info *vcsdetect.Info) (string, error) {
 // For jj, fetched remote bookmarks are the upstream signal. A remote bookmark
 // outside ancestors(@) means there is fetched work that the current checkout
 // does not contain.
-func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBehind bool) (status string, behind bool, hasUpstream bool) {
+//
+// If a probe fails, err says which and why, and status and behind are
+// unknown: they come back empty, with hasUpstream true so the caller adds
+// no fetch-marker fallback on top.
+func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBehind bool) (status string, behind bool, hasUpstream bool, err error) {
+	defer func() {
+		if err != nil {
+			status, behind, hasUpstream = "", false, true
+		}
+	}()
 	var out string
 	switch info.VCS {
 	case "git":
-		out, _ = capture("git", "-C", info.RootDir, "status", "--branch", "--porcelain", "--untracked-files=all")
+		out, err = probe("git status", info.RootDir, "git", "-C", info.RootDir, "status", "--branch", "--porcelain", "--untracked-files=all")
+		if err != nil {
+			return
+		}
 		lines := strings.SplitN(out, "\n", 2)
 		var branchLine, rest string
 		if len(lines) > 0 {
@@ -318,6 +335,7 @@ func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBeh
 		// (jj git init writes "git"); anything else is a fast-moving backend.
 		gitBacked := info.Backend == "" || info.Backend == "git"
 		var desc, diff, bookmarkStates string
+		var descErr, diffErr, bookmarkErr, syncErr error
 		var syncTime time.Time
 		var syncFound bool
 		var jjwg sync.WaitGroup
@@ -329,11 +347,11 @@ func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBeh
 			jjwg.Add(2)
 			go func() {
 				defer jjwg.Done()
-				desc, _ = capture("jj", "-R", info.RootDir, "log", "--no-graph", "-r", "@", "-T", "description")
+				desc, descErr = probe("jj log", info.RootDir, "jj", "-R", info.RootDir, "log", "--no-graph", "-r", "@", "-T", "description")
 			}()
 			go func() {
 				defer jjwg.Done()
-				diff, _ = capture("jj", "-R", info.RootDir, "diff", "--summary")
+				diff, diffErr = probe("jj diff", info.RootDir, "jj", "-R", info.RootDir, "diff", "--summary")
 			}()
 		}
 		if needBehind {
@@ -342,17 +360,24 @@ func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBeh
 				go func() {
 					defer jjwg.Done()
 					tmpl := `if(self.contained_in("ancestors(@)"), "upstream\n", "behind\n")`
-					bookmarkStates, _ = capture("jj", "-R", info.RootDir, "log", "--no-graph", "-r", "remote_bookmarks()", "-T", tmpl)
+					bookmarkStates, bookmarkErr = probe("jj log", info.RootDir, "jj", "-R", info.RootDir, "log", "--no-graph", "-r", "remote_bookmarks()", "-T", tmpl)
 				}()
 			} else {
 				jjwg.Add(1)
 				go func() {
 					defer jjwg.Done()
-					syncTime, syncFound = jjsync.LastSync(info.RootDir)
+					var serr error
+					syncTime, syncFound, serr = jjsync.LastSyncChecked(info.RootDir)
+					if serr != nil {
+						syncErr = probeError("jj op log", info.RootDir, serr)
+					}
 				}()
 			}
 		}
 		jjwg.Wait()
+		if err = errors.Join(descErr, diffErr, bookmarkErr, syncErr); err != nil {
+			return
+		}
 		if needStatus && desc == "" {
 			out = diff
 		}
@@ -378,16 +403,39 @@ func getStatusAndBehind(info *vcsdetect.Info, opts *Options, needStatus, needBeh
 		}
 	case "hg":
 		if needBehind {
-			out, _ = capture(resolveHg(opts), "-R", info.RootDir, "summary")
+			out, err = probe("hg summary", info.RootDir, resolveHg(opts), "-R", info.RootDir, "summary")
+			if err != nil {
+				return
+			}
 			status, behind, hasUpstream = parseHgSummary(out, needStatus)
 			return
 		}
-		out, _ = capture(resolveHg(opts), "-R", info.RootDir, "status")
+		out, err = probe("hg status", info.RootDir, resolveHg(opts), "-R", info.RootDir, "status")
+		if err != nil {
+			return
+		}
 	}
 	if strings.TrimSpace(out) != "" {
 		status = "*"
 	}
 	return
+}
+
+// probe runs a status probe, returning its output or, if it fails, an
+// error naming the probe and the project with the command's own diagnostic.
+func probe(name, rootDir, cmd string, args ...string) (string, error) {
+	out, err := capture(cmd, args...)
+	if err != nil {
+		return "", probeError(name, rootDir, err)
+	}
+	return out, nil
+}
+
+// probeError names the failed probe and the project directory (not the full
+// path, since this text can reach a log), plus the command's own stderr.
+func probeError(name, rootDir string, err error) error {
+	return fmt.Errorf("%s in %s failed, so its status is unknown: %w%s",
+		name, filepath.Base(rootDir), err, gitStderr(err))
 }
 
 // behindBySync reports whether a fast-moving backend should nag to pull:

@@ -159,6 +159,45 @@ func TestPromptInfoStripsHgPathPrefix(t *testing.T) {
 	}
 }
 
+// A failed status probe is reported on stderr, and prompt-info still
+// prints the rest of the line and exits 0, so the prompt keeps its
+// directory part.
+func TestPromptInfoReportsFailedProbe(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".hg", "store"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	fake := filepath.Join(t.TempDir(), "fakehg")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\necho 'abort: broken' >&2\nexit 255\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(cwd) })
+
+	outR, outW, _ := os.Pipe()
+	errR, errW, _ := os.Pipe()
+	prevStdout, prevStderr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+	promptInfo("", "--hg-path="+fake, []string{"--format={project} {status}", "--color=never"})
+	outW.Close()
+	errW.Close()
+	os.Stdout, os.Stderr = prevStdout, prevStderr
+	out, _ := io.ReadAll(outR)
+	stderr, _ := io.ReadAll(errR)
+
+	if got, want := string(out), filepath.Base(root)+"\n"; got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
+	}
+	for _, want := range []string{"vcs prompt-info: hg status in " + filepath.Base(root) + " failed", "abort: broken"} {
+		if !strings.Contains(string(stderr), want) {
+			t.Errorf("stderr = %q, want it to contain %q", stderr, want)
+		}
+	}
+}
+
 // TestAutoFetchCmdStripsHgPathPrefix covers the regression where
 // main()'s flag parser stores --hg-path as the literal flag string
 // (`--hg-path=PATH`) for passthrough to vcs-hg, but autoFetchCmd

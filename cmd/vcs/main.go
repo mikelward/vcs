@@ -277,6 +277,11 @@ func promptInfo(forceVCS string, hgPath string, args []string) {
 		fmt.Fprintln(os.Stderr, "vcs prompt-info:", err)
 		os.Exit(1)
 	}
+	if result.ProbeErr != nil {
+		// Reported, but the rest of the line is still good: print it
+		// without status rather than leave the prompt with no VCS part.
+		fmt.Fprintln(os.Stderr, "vcs prompt-info:", result.ProbeErr)
+	}
 	output := promptinfo.Format(result, format, color)
 	fmt.Println(output)
 }

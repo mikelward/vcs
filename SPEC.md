@@ -204,6 +204,12 @@ pull/sync operation — read from `jj op log` — is older than the staleness
 threshold, so the prompt nags about a drifting checkout rather than on
 every prompt.
 
+When a status probe fails (`git status`, `hg summary` or `hg status`, the
+`jj log`, `jj diff` or `jj op log` calls), `prompt-info` and `prompt-line`
+print which one and its own error to stderr, and render the line without
+`status` or `behind` rather than as a clean, up-to-date checkout.
+`prompt-info` still exits 0.
+
 The `branch` field is read straight from the git `HEAD` file rather than by
 running git. Repositories using a non-default ref backend (`reftable`) are the
 exception: there `HEAD` is only a placeholder pointing at the deliberately
@@ -256,10 +262,6 @@ script starts no processes.
   whose description mentions a fetch, sync, pull or import (2000 if none
   does, so the reminder shows). If jj fails, its error is shown with what
   failed, no marker is made, and the next prompt asks again.
-
-When a status probe (`git status`, `hg summary`, `hg status`, `jj log`)
-fails, its error goes to stderr with a line saying which probe failed, and
-the prompt renders without status or `pull` rather than as a clean checkout.
 
 `auto-fetch` does nothing and exits 0 (`--verbose` prints `disabled`), so
 shell hooks that call it stay harmless.
