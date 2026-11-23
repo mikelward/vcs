@@ -10,12 +10,12 @@
 #
 # Where this differs from the Go vcs, on purpose:
 #   - prompt-info's {behind} ("pull") is also shown when the last fetch is
-#     more than 4 hours old, because there is no background auto-fetch.
+#     more than 4 hours old.
 #   - On a non-git jj backend (e.g. piper) {behind} reads the mtime of
-#     .jj/vcs-synced, which `vcs pull` and `vcs fastforward` update, instead
-#     of searching `jj op log`. A sync run another way shows "pull" until the
-#     next `vcs pull`.
-#   - auto-fetch does nothing.
+#     .jj/vcs-synced, which `vcs pull`, `vcs fastforward` and auto-fetch
+#     update, instead of searching `jj op log`.
+#   - auto-fetch checks here whether a fetch is due, and hands the fetch
+#     itself to vcs-py in the background, which logs it.
 # SPEC.md has the details.
 
 _nl='
@@ -508,6 +508,77 @@ _unmerged() {
     esac
 }
 
+# auto-fetch: when this checkout's last fetch is older than --max-age, start
+# vcs-py's auto-fetch in the background, which locks, fetches and logs. The
+# prompt pays only the check here. Durations other than a whole number of
+# hours, minutes or seconds, and --dry-run, go to vcs-py itself.
+_auto_fetch() {
+    _verbose=false _age=1h
+    while test $# -gt 0; do
+        case $1 in
+            -v|--verbose) _verbose=true ;;
+            --max-age=*) _age=${1#*=} ;;
+            --max-age)
+                test $# -ge 2 || { echo "vcs auto-fetch: --max-age needs a value" >&2; exit 2; }
+                _age=$2
+                shift
+                ;;
+            *) echo "vcs auto-fetch: unknown flag: $1" >&2; exit 2 ;;
+        esac
+        shift
+    done
+    _vflag=
+    $_verbose && _vflag=--verbose
+    case $_age in
+        ''|*[!0-9hms]*|*[hms]*[0-9hms]*|[hms]*) _min= ;;
+        *h) _min=$((${_age%h} * 60)) ;;
+        *m) _min=${_age%m} ;;
+        *s) _min=$(((${_age%s} + 59) / 60)) ;;
+        *) _min= ;;
+    esac
+    if test -z "$_min" || $_dry; then
+        _py auto-fetch --max-age="$_age" $_vflag
+    fi
+
+    if ! _detect "$PWD"; then
+        $_verbose && echo not-in-repo
+        return 0
+    fi
+    test -n "$_force" && _vcs=$_force
+    case $_vcs in
+        git) _git_dir "$_root"; _marker=$_r/FETCH_HEAD ;;
+        hg) _marker=$_root/.hg/store/00changelog.i ;;
+        jj)
+            case $_backend in
+                ''|git) _jj_git_dir "$_root"; _marker=$_r/FETCH_HEAD ;;
+                *) _marker=$_root/.jj/vcs-synced ;;
+            esac
+            ;;
+        *)
+            $_verbose && echo unsupported
+            return 0
+            ;;
+    esac
+    if test -e "$_marker" && test -z "$(find "$_marker" -mmin +"$_min" 2>/dev/null)"; then
+        $_verbose && echo fresh
+        return 0
+    fi
+    _log=${XDG_STATE_HOME:-$HOME/.local/state}/vcs/auto-fetch.log
+    mkdir -p "${_log%/*}" 2>/dev/null
+    if test -n "${VCS_AUTO_FETCH_WAIT:-}"; then  # For the tests.
+        _auto_fetch_py </dev/null >/dev/null 2>>"$_log"
+    else
+        ( _auto_fetch_py </dev/null >/dev/null 2>>"$_log" & )
+    fi
+    $_verbose && echo fetched
+    return 0
+}
+
+_auto_fetch_py() {
+    "$_vcs_py" ${_force:+"--vcs=$_force"} ${_hgpath:+"--hg-path=$_hgpath"} \
+        auto-fetch --max-age="$_age"
+}
+
 _list_commands() {
     for _c in absorb add addremove amend annotate at_tip base blame branch \
         branches change changed changelog changes checkout commit commitforce \
@@ -567,11 +638,7 @@ shift
 case $_sub in
     --list-commands) _list_commands ;;
     clearcache) find . -name .vcs_cache -type f -exec rm -f {} + 2>/dev/null; exit 0 ;;
-    auto-fetch)
-        # Background fetching is off in the portable version (TODO.md).
-        case " $* " in *' --verbose '*|*' -v '*) echo disabled ;; esac
-        exit 0
-        ;;
+    auto-fetch) _auto_fetch "$@" ;;
     detect) _detect_here detect; printf '%s\n' "$_vcs" ;;
     rootdir) _detect_here rootdir; printf '%s\n' "$_root" ;;
     backend) _detect_here backend; test -z "$_backend" || printf '%s\n' "$_backend" ;;

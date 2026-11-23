@@ -445,7 +445,7 @@ class PiperPromptTest(Base):
         self.check("piper")
 
 
-class UnmergedAndAutoFetchTest(Base):
+class UnmergedTest(Base):
     def test_unmerged_git(self):
         root = make_git(self.e)
         want = "+ git --no-pager branch -v --no-merged origin/main\n"
@@ -454,11 +454,6 @@ class UnmergedAndAutoFetchTest(Base):
             with self.subTest(impl=name):
                 self.assertEqual((rc, err), (0, want))
 
-    def test_auto_fetch_is_off(self):
-        root = make_git(self.e)
-        self.assertAll(ALL_IMPLS, ["auto-fetch"], root, "")
-        self.assertAll(ALL_IMPLS, ["auto-fetch", "--verbose"], root,
-                       "disabled\n")
 
     def test_other_subcommands_go_to_python(self):
         root = make_git(self.e)
@@ -469,6 +464,133 @@ class UnmergedAndAutoFetchTest(Base):
                     (rc, err),
                     (0, "+ git --no-pager status --short "
                         "--untracked-files=all\n"))
+
+
+class AutoFetchTest(Base):
+    """auto-fetch, run to completion (VCS_AUTO_FETCH_WAIT) so the tests can
+    look at what the background fetch did."""
+
+    def setUp(self):
+        Base.setUp(self)
+        self.root = make_git(self.e)
+        # A fetch that can succeed offline.
+        self.e.sh("git remote set-url origin %s" % self.e.path("proj-origin"),
+                  self.root)
+        self.fetch_head = os.path.join(self.root, ".git", "FETCH_HEAD")
+        self.state = self.e.path("state")
+        self.log = os.path.join(self.state, "vcs", "auto-fetch.log")
+        self.env = {"VCS_AUTO_FETCH_WAIT": "1", "XDG_STATE_HOME": self.state}
+
+    def fetch(self, impls, want, args=(), cwd=None, env=None):
+        self.assertAll(impls, ["auto-fetch", "--verbose"] + list(args),
+                       cwd or self.root, want + "\n",
+                       extra_env=dict(self.env, **(env or {})))
+
+    def test_outside_a_repo(self):
+        self.fetch(ALL_IMPLS, "not-in-repo", cwd=self.e.tmp)
+
+    def test_fresh_fetch_is_left_alone(self):
+        self.fetch(ALL_IMPLS, "fresh")
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_stale_fetch_is_refreshed_and_logged(self):
+        for impl in ALL_IMPLS:
+            with self.subTest(impl=impl_name(impl)):
+                age(self.fetch_head, 2 * HOURS)
+                self.fetch([impl], "fetched")
+                self.assertLess(time.time() - os.stat(self.fetch_head).st_mtime,
+                                60)
+        with open(self.log) as f:
+            log = f.read()
+        self.assertEqual(log.count("proj: started git -C %s fetch --quiet"
+                                   % self.root), len(ALL_IMPLS), log)
+        self.assertEqual(log.count("proj: ended with exit status 0"),
+                         len(ALL_IMPLS), log)
+
+    def test_failed_fetch_is_logged(self):
+        self.e.sh("git remote set-url origin %s" % self.e.path("nowhere"),
+                  self.root)
+        age(self.fetch_head, 2 * HOURS)
+        self.fetch(ALL_IMPLS[:1], "fetched")
+        with open(self.log) as f:
+            log = f.read()
+        self.assertIn("proj: ended with exit status 128", log)
+
+    def test_max_age(self):
+        age(self.fetch_head, 40 * 60)
+        self.fetch(ALL_IMPLS, "fresh", ["--max-age", "1h"])
+        for impl in ALL_IMPLS:
+            with self.subTest(impl=impl_name(impl)):
+                age(self.fetch_head, 40 * 60)
+                self.fetch([impl], "fetched", ["--max-age=30m"])
+        age(self.fetch_head, 40 * 60)
+        self.fetch(ALL_IMPLS, "fresh", ["--max-age=0.75h"])
+        for impl in ALL_IMPLS:
+            with self.subTest(impl=impl_name(impl)):
+                age(self.fetch_head, 90)
+                self.fetch([impl], "fetched", ["--max-age=1s"])
+
+    def test_bad_flags(self):
+        for args, err in ((["--max-age=soon"], "invalid --max-age"),
+                          (["--max-age"], "--max-age needs a value"),
+                          (["--bogus"], "unknown flag: --bogus")):
+            for name, (rc, out, stderr) in self.each(
+                    ALL_IMPLS, ["auto-fetch"] + args, self.root):
+                with self.subTest(impl=name, args=args):
+                    self.assertEqual(rc, 2)
+                    self.assertIn(err, stderr)
+
+    def test_dry_run_prints_the_fetch(self):
+        age(self.fetch_head, 2 * HOURS)
+        for name, (rc, out, err) in self.each(
+                ALL_IMPLS, ["-n", "auto-fetch", "--verbose"], self.root):
+            with self.subTest(impl=name):
+                self.assertEqual((rc, out, err), (
+                    0, "fetched\n",
+                    "+ git -C %s fetch --quiet\n" % self.root))
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_a_running_fetch_is_not_doubled(self):
+        import fcntl
+        age(self.fetch_head, 2 * HOURS)
+        fd = os.open(os.path.join(self.root, ".git", "vcs-fetch.lock"),
+                     os.O_CREAT | os.O_WRONLY)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        # vcs-py says so; the sh front end has already handed over by then.
+        self.fetch([ALL_IMPLS[-1]], "fresh")
+        self.assertFalse(os.path.exists(self.log))
+
+    def test_unsupported(self):
+        p4 = self.e.path("depot")
+        os.mkdir(p4)
+        open(os.path.join(p4, ".p4config"), "w").close()
+        self.fetch(ALL_IMPLS, "unsupported", cwd=p4)
+
+    def test_piper_syncs_and_records_it(self):
+        root = self.e.path("piper")
+        os.makedirs(os.path.join(root, ".jj", "repo", "store"))
+        with open(os.path.join(root, ".jj", "repo", "store", "type"),
+                  "w") as f:
+            f.write("piper\n")
+        bindir = self.e.path("bin")
+        os.mkdir(bindir)
+        calls = self.e.path("calls")
+        with open(os.path.join(bindir, "jj"), "w") as f:
+            f.write('#!/bin/sh\necho "$*" >> %s\n' % calls)
+        os.chmod(os.path.join(bindir, "jj"), 0o755)
+        marker = os.path.join(root, ".jj", "vcs-synced")
+        env = {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+        for impl in ALL_IMPLS:
+            with self.subTest(impl=impl_name(impl)):
+                open(marker, "w").close()
+                age(marker, 2 * HOURS)
+                self.fetch([impl], "fetched", cwd=root, env=env)
+                self.assertLess(time.time() - os.stat(marker).st_mtime, 60)
+                self.fetch([impl], "fresh", cwd=root, env=env)
+        with open(calls) as f:
+            self.assertEqual(f.read(), ("--repository %s piper pull\n" % root)
+                             * len(ALL_IMPLS))
 
 
 class PromptLineTest(Base):

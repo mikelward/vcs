@@ -247,24 +247,39 @@ script starts no processes.
   the branch.
 - `behind` (`pull`) is also true when the fetch marker (`FETCH_HEAD`, or hg's
   `00changelog.i`) is over 4 hours old, whether or not an upstream is
-  configured, because there is no background auto-fetch. A missing marker is
-  not stale.
+  configured, so the reminder still comes when auto-fetch can't run (the
+  shell hooks skip it without an SSH identity). A missing marker is not
+  stale.
 - jj on a git backend takes one `jj log -r '@ | remote_bookmarks()'` whose
   template prints `@*` for an undescribed working copy with changes and
   `upstream` or `behind` for each remote bookmark, instead of up to three jj
   processes.
 - jj on any other backend (e.g. piper) reads the mtime of `.jj/vcs-synced`,
-  which `vcs pull` and `vcs fastforward` update after a successful sync. The
-  prompt runs no jj for `behind`. A sync run another way leaves the reminder
-  showing until the next `vcs pull`. When the marker is missing, as in a
+  which `vcs pull`, `vcs fastforward` and auto-fetch's `jj piper pull` update
+  after a successful sync. The prompt runs no jj for `behind`. A sync run
+  another way leaves the reminder showing until one of those runs. When the marker is missing, as in a
   workspace `vcs pull` hasn't synced yet, the prompt runs `jj op log
   --ignore-working-copy` once and dates the marker from the last operation
   whose description mentions a fetch, sync, pull or import (2000 if none
   does, so the reminder shows). If jj fails, its error is shown with what
   failed, no marker is made, and the next prompt asks again.
 
-`auto-fetch` does nothing and exits 0 (`--verbose` prints `disabled`), so
-shell hooks that call it stay harmless.
+`auto-fetch` keeps the Go version's behavior, split so that the prompt pays
+only a check. The sh script finds the checkout's fetch marker (git's
+`FETCH_HEAD` in the worktree's own git directory, hg's `00changelog.i`, the
+backing git directory's `FETCH_HEAD` for jj on git, `.jj/vcs-synced` for jj
+on another backend) and, if it is missing or older than `--max-age` (`find
+-mmin`), starts `vcs-py auto-fetch` in the background and returns. `vcs-py`
+checks again, takes the git fetch lock without waiting (another fetch holding
+it means nothing to do), and starts the fetch in a new session with no
+terminal, no credential prompts and `ssh -o BatchMode=yes` unless an SSH
+command is already set. Each fetch's start, output and exit status go to
+`~/.local/state/vcs/auto-fetch.log` (`$XDG_STATE_HOME`), which starts over
+past 1 MB; a piper sync that succeeds also updates `.jj/vcs-synced`. A
+`--max-age` that isn't a whole number of hours, minutes or seconds, and
+`--dry-run`, go straight to `vcs-py`. Because the sh script hands over before
+the lock is checked, its `--verbose` says `fetched` when a running fetch made
+one unnecessary.
 
 ## Hosting Detection
 

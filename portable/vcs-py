@@ -1638,6 +1638,199 @@ def prompt_line_cmd(force, hg_path, args):
     return 0
 
 
+# --- auto-fetch ----------------------------------------------------------------
+
+_DURATION_UNITS = {"ns": 1e-9, "us": 1e-6, "\u00b5s": 1e-6, "ms": 1e-3, "s": 1,
+                   "m": 60, "h": 3600}
+
+
+def parse_duration(text):
+    """Seconds in a Go-style duration such as 1h, 30m, 1h30m or 1.5h."""
+    if text == "0":
+        return 0.0
+    parts = re.findall(r"(\d+(?:\.\d*)?|\.\d+)(ns|us|\u00b5s|ms|s|m|h)", text)
+    if not parts or "".join(n + u for n, u in parts) != text:
+        raise ValueError("time: invalid duration %r" % text)
+    return sum(float(n) * _DURATION_UNITS[u] for n, u in parts)
+
+
+def auto_fetch_log_path():
+    state = os.environ.get("XDG_STATE_HOME") or os.path.join(
+        os.path.expanduser("~"), ".local", "state")
+    return os.path.join(state, "vcs", "auto-fetch.log")
+
+
+def open_auto_fetch_log():
+    """The background fetch log, opened to append; restarted past 1 MB."""
+    path = auto_fetch_log_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    mode = "a"
+    try:
+        if os.path.getsize(path) > 1 << 20:
+            mode = "w"
+    except OSError:
+        pass  # No log yet: append creates it.
+    return open(path, mode)
+
+
+def fetch_plan(info, hg_path):
+    """(marker, command, git lock dir or None, mark marker after) or None.
+
+    The marker is the file whose age says when this checkout last fetched."""
+    root = info.root
+    if info.vcs == "git":
+        marker = os.path.join(git_dir(root), "FETCH_HEAD")
+        return (marker, ["git", "-C", root, "fetch", "--quiet"],
+                os.path.dirname(marker), False)
+    if info.vcs == "hg":
+        return (os.path.join(root, ".hg", "store", "00changelog.i"),
+                [hg_path or find_hg(), "-R", root, "pull", "--quiet"],
+                None, False)
+    if info.vcs == "jj":
+        if info.backend in ("", "git"):
+            return (os.path.join(jj_git_dir(root), "FETCH_HEAD"),
+                    ["jj", "--repository", root, "git", "fetch", "--quiet"],
+                    None, False)
+        return (os.path.join(root, JJ_SYNC_MARKER),
+                ["jj", "--repository", root, "piper", "pull"], None, True)
+    return None
+
+
+def try_fetch_lock(gd):
+    """The fd of vcs-fetch.lock in gd, held; "locked" if another process
+    holds it; None if it can't be taken (then fetch without it)."""
+    try:
+        import fcntl
+    except ImportError:
+        return None
+    try:
+        fd = os.open(os.path.join(gd, "vcs-fetch.lock"),
+                     os.O_CREAT | os.O_WRONLY, 0o600)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return "locked"
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def fetch_env(command):
+    """The environment for a fetch no one is there to answer prompts for."""
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+    if (not env.get("GIT_SSH_COMMAND") and not env.get("GIT_SSH")
+            and os.path.basename(command[0]) in ("git", "jj")
+            and not try_capture("git", "config", "core.sshCommand")):
+        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    return env
+
+
+def auto_fetch_cmd(force, hg_path, args):
+    """Start a background fetch if this checkout's last one is older than
+    --max-age (default 1h). Says what it did with --verbose: not-in-repo,
+    fresh, fetched or unsupported."""
+    verbose, max_age = False, 3600.0
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-v", "--verbose"):
+            verbose, i = True, i + 1
+            continue
+        got = _flag_value(args, i, "max-age")
+        if got is None:
+            if a == "--max-age":
+                sys.stderr.write("vcs auto-fetch: --max-age needs a value\n")
+            else:
+                sys.stderr.write("vcs auto-fetch: unknown flag: %s\n" % a)
+            return 2
+        value, i = got
+        try:
+            max_age = parse_duration(value)
+        except ValueError as e:
+            sys.stderr.write("vcs auto-fetch: invalid --max-age: %s\n" % e)
+            return 2
+
+    def say(action):
+        if verbose:
+            print(action)
+        return 0
+
+    info = detect(getwd())
+    if info is None or not info.root:
+        return say("not-in-repo")
+    if force:
+        info.vcs = force
+    plan = fetch_plan(info, hg_path)
+    if plan is None:
+        return say("unsupported")
+    marker, command, lock_dir, mark = plan
+    try:
+        if time.time() - os.stat(marker).st_mtime <= max_age:
+            return say("fresh")
+    except OSError:
+        pass  # Never fetched: due now.
+    lock = None
+    if lock_dir is not None:
+        lock = try_fetch_lock(lock_dir)
+        if lock == "locked":
+            return say("fresh")  # Another fetch is running.
+    try:
+        if DRY_RUN:
+            print_command(command)
+            return say("fetched")
+        try:
+            log = open_auto_fetch_log()
+        except OSError as e:
+            sys.stderr.write("vcs auto-fetch: cannot open %s: %s\n"
+                             % (auto_fetch_log_path(), e.strerror))
+            return 1
+        with log:
+            child = subprocess.Popen(
+                [sys.executable, os.path.realpath(__file__), "__auto-fetch-run",
+                 marker if mark else "", os.path.basename(info.root)]
+                + command,
+                stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                env=fetch_env(command), start_new_session=True,
+                pass_fds=(lock,) if isinstance(lock, int) else ())
+        if os.environ.get("VCS_AUTO_FETCH_WAIT"):  # For the tests.
+            child.wait()
+        return say("fetched")
+    finally:
+        if isinstance(lock, int):
+            os.close(lock)  # The child keeps its copy until it ends.
+
+
+def auto_fetch_run(argv):
+    """The detached child: run the fetch, log how it went, and for a piper
+    workspace record the sync. stdout and stderr are the log."""
+    marker, project, command = argv[0], argv[1], argv[2:]
+
+    def log(what):
+        sys.stdout.write("%s %s: %s\n" % (
+            time.strftime("%Y-%m-%dT%H:%M:%S%z"), project, what))
+        sys.stdout.flush()
+
+    log("started " + " ".join(shell_quote(a) for a in command))
+    try:
+        rc = _exit_code(subprocess.call(command))
+    except OSError as e:
+        log("could not start %s: %s" % (command[0], e.strerror))
+        return 1
+    log("ended with exit status %d" % rc)
+    if rc == 0 and marker:
+        try:
+            with open(marker, "a"):
+                pass
+            os.utime(marker, None)
+        except OSError as e:
+            log("could not record the sync in %s: %s" % (marker, e.strerror))
+    return rc
+
+
 # --- main ----------------------------------------------------------------------
 
 def version_info():
@@ -1734,10 +1927,9 @@ def main(argv):
     if sub == "prompt-line":
         return prompt_line_cmd(force, hg_path, args)
     if sub == "auto-fetch":
-        # Background fetching is off in the portable version (TODO.md).
-        if "--verbose" in args or "-v" in args:
-            print("disabled")
-        return 0
+        return auto_fetch_cmd(force, hg_path, args)
+    if sub == "__auto-fetch-run":
+        return auto_fetch_run(args)
     if sub == "clearcache":
         for d, _, files in os.walk("."):
             if ".vcs_cache" in files:
