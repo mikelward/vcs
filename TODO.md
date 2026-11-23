@@ -84,9 +84,6 @@ version doesn't do. The Go version still auto-fetches, and its tests pin
   stale, run `jj op log --ignore-working-copy` in the background (at most
   every 10 minutes) and set the marker's mtime to the last sync it records,
   so a sync run outside `vcs pull` clears the reminder.
-- Report failed status probes in the Go `promptinfo` as the portable
-  version does: today a failed `git status`, `hg summary` or `jj log` is
-  discarded and the prompt reads as a clean checkout.
 
 - Add the three ruleset settings this setup expects: require `codex` (not
   `sweep`), require `codex-review-check / codex-review-check`, and require

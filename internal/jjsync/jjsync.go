@@ -19,6 +19,13 @@ import (
 // state into the workspace (fetch/sync/pull/import) and whether any such
 // operation was found.
 func LastSync(rootDir string) (time.Time, bool) {
+	t, found, _ := LastSyncChecked(rootDir)
+	return t, found
+}
+
+// LastSyncChecked is LastSync, with the error when jj op log fails (an
+// *exec.ExitError carrying jj's stderr, or the exec failure).
+func LastSyncChecked(rootDir string) (time.Time, bool, error) {
 	// %s renders the operation end time as Unix seconds, which is
 	// unambiguous to parse (no timezone handling). op log is newest-first,
 	// so the first matching line is the most recent sync.
@@ -38,9 +45,10 @@ func LastSync(rootDir string) (time.Time, bool) {
 		"--ignore-working-copy",
 		"-T", `time.end().format("%s") ++ " " ++ description ++ "\n"`).Output()
 	if err != nil {
-		return time.Time{}, false
+		return time.Time{}, false, err
 	}
-	return Parse(string(out))
+	t, found := Parse(string(out))
+	return t, found, nil
 }
 
 // Parse scans `jj op log` output (one "<unix-seconds> <description>" line per
