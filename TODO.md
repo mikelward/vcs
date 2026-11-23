@@ -87,8 +87,6 @@ version doesn't do. The Go version still auto-fetches, and its tests pin
 - Report failed status probes in the Go `promptinfo` as the portable
   version does: today a failed `git status`, `hg summary` or `jj log` is
   discarded and the prompt reads as a clean checkout.
-- Follow `.jj/repo` in secondary jj workspaces in the Go `vcsdetect`, as the
-  portable version does; today such a workspace gets no backend or hosting.
 
 - Add the three ruleset settings this setup expects: require `codex` (not
   `sweep`), require `codex-review-check / codex-review-check`, and require

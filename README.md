@@ -263,7 +263,6 @@ Where it differs from the Go version:
 | `auto-fetch` | Fetches in the background | Does nothing |
 | `prompt-info` `pull` | The upstream is ahead | The upstream is ahead, or the last fetch is over 4 hours old |
 | `pull` on a non-git jj backend (piper) | The last sync in `jj op log` is over 4 hours old | `.jj/vcs-synced` is over 4 hours old; `vcs pull` and `vcs fastforward` update it, a sync run another way does not, and a missing one is dated once from `jj op log` |
-| Secondary jj workspaces | Backend not detected | Backend detected |
 
 ## Shell integration
 

@@ -126,7 +126,7 @@ func Detect(dir string) (*Info, error) {
 	// Detect backend.
 	switch vcsName {
 	case "jj":
-		storePath := filepath.Join(rootDir, ".jj", "repo", "store", "type")
+		storePath := filepath.Join(JJRepoDir(rootDir), "store", "type")
 		if data, err := os.ReadFile(storePath); err == nil {
 			info.Backend = strings.TrimSpace(string(data))
 		}
@@ -144,6 +144,25 @@ func Detect(dir string) (*Info, error) {
 	return info, nil
 }
 
+// JJRepoDir returns the repo directory of the jj workspace rooted at
+// rootDir. In the main workspace that is .jj/repo; in a secondary one
+// (`jj workspace add`) .jj/repo is a file holding the path of the main
+// workspace's repo directory, relative to .jj.
+func JJRepoDir(rootDir string) string {
+	repo := filepath.Join(rootDir, ".jj", "repo")
+	if fi, err := os.Stat(repo); err == nil && !fi.IsDir() {
+		if data, err := os.ReadFile(repo); err == nil {
+			if target := strings.TrimSpace(string(data)); target != "" {
+				if filepath.IsAbs(target) {
+					return filepath.Clean(target)
+				}
+				return filepath.Join(rootDir, ".jj", target)
+			}
+		}
+	}
+	return repo
+}
+
 // JJGitDir returns the backing git directory for the jj repo rooted at
 // rootDir. jj records the location in .jj/repo/store/git_target: colocated
 // workspaces (the `jj git init` default) point it at the top-level .git,
@@ -151,7 +170,7 @@ func Detect(dir string) (*Info, error) {
 // When git_target is missing or unreadable, fall back to the top-level .git
 // directory if one exists (colocated), else the non-colocated store path.
 func JJGitDir(rootDir string) string {
-	store := filepath.Join(rootDir, ".jj", "repo", "store")
+	store := filepath.Join(JJRepoDir(rootDir), "store")
 	if data, err := os.ReadFile(filepath.Join(store, "git_target")); err == nil {
 		target := strings.TrimSpace(string(data))
 		if target != "" {
