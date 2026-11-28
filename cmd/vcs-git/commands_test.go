@@ -1093,6 +1093,23 @@ func TestPrecommitRunsHook(t *testing.T) {
 	}
 }
 
+func TestPrecommitIgnoresDirectory(t *testing.T) {
+	_, local := newGitRepo(t)
+	gitDir := gitOut(t, local, "rev-parse", "--git-dir")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(local, gitDir)
+	}
+	hookDir := filepath.Join(gitDir, "hooks", "pre-commit")
+	if err := os.MkdirAll(hookDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := runDispatch(t, local, "precommit")
+	if err == nil || !strings.Contains(err.Error(), "no ") {
+		t.Fatalf("precommit with directory at hook path: err = %v, want 'no ... hook'", err)
+	}
+}
+
 //
 // review / upload / uploadchain
 //

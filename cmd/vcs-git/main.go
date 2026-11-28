@@ -405,7 +405,7 @@ func gitHook(hookName string, args []string) error {
 	}
 	script := gitDir + "/hooks/" + hookName
 	fi, err := os.Stat(script)
-	if err != nil || fi.Mode()&0111 == 0 {
+	if err != nil || !fi.Mode().IsRegular() || fi.Mode()&0111 == 0 {
 		return fmt.Errorf("no %s hook", script)
 	}
 	return runner.Run(script, args...)
@@ -542,7 +542,7 @@ func gitFix(args []string) error {
 	if err == nil {
 		script := gitDir + "/hooks/fix"
 		fi, err := os.Stat(script)
-		if err == nil && fi.Mode()&0111 != 0 {
+		if err == nil && fi.Mode().IsRegular() && fi.Mode()&0111 != 0 {
 			return runner.Run(script, args...)
 		}
 	}
