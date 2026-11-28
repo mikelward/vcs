@@ -654,6 +654,27 @@ class AutoFetchTest(Base):
         self.assertEqual(log.count("proj: ended with exit status 0"),
                          len(ALL_IMPLS), log)
 
+    def test_respects_core_ssh_command_in_non_colocated_jj(self):
+        root = self.e.path("jj-noncoloc")
+        store_git = os.path.join(root, ".jj", "repo", "store", "git")
+        os.makedirs(store_git)
+        with open(os.path.join(root, ".jj", "repo", "store", "type"),
+                  "w") as f:
+            f.write("git\n")
+        self.e.sh("git init --bare -q && git config core.sshCommand 'ssh -i /jj/key'",
+                  store_git)
+        bindir = self.e.path("bin")
+        os.mkdir(bindir)
+        seen = self.e.path("seen-ssh")
+        with open(os.path.join(bindir, "jj"), "w") as f:
+            f.write('#!/bin/sh\nprintf "%s\\n" "${GIT_SSH_COMMAND-UNSET}" >> '
+                    + seen + '\n')
+        os.chmod(os.path.join(bindir, "jj"), 0o755)
+        env = {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+        self.fetch([ALL_IMPLS[-1]], "fetched", cwd=root, env=env)
+        with open(seen) as f:
+            self.assertEqual(f.read(), "UNSET\n")
+
 
 
 class PromptLineTest(Base):

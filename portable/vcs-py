@@ -1731,11 +1731,18 @@ def fetch_env(command):
     env = clean_git_env()
     env.update(GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="false",
                SSH_ASKPASS_REQUIRE="never")
+    base = os.path.basename(command[0])
     if (not env.get("GIT_SSH_COMMAND") and not env.get("GIT_SSH")
-            and os.path.basename(command[0]) in ("git", "jj")
-            and not try_capture("git", "config", "core.sshCommand",
-                                env=clean_git_env())):
-        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+            and base in ("git", "jj")):
+        if base == "git" and len(command) >= 3 and command[1] == "-C":
+            cfg_cmd = ("git", "-C", command[2], "config", "core.sshCommand")
+        elif base == "jj" and len(command) >= 3 and command[1] == "--repository":
+            cfg_cmd = ("git", "--git-dir=" + jj_git_dir(command[2]),
+                       "config", "core.sshCommand")
+        else:
+            cfg_cmd = ("git", "config", "core.sshCommand")
+        if not try_capture(*cfg_cmd, env=clean_git_env()):
+            env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
     return env
 
 
