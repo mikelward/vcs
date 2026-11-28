@@ -820,3 +820,55 @@ func TestCoreSSHCommandIgnoresInheritedGitDir(t *testing.T) {
 		t.Error("coreSSHCommandConfigured leaked inherited GIT_DIR from another repo")
 	}
 }
+
+func TestCoreSSHCommandInTargetGitRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	repo := t.TempDir()
+	gitInit(t, repo)
+	gitRun(t, repo, "config", "core.sshCommand", "ssh -i /target/key")
+
+	other := t.TempDir()
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWd) })
+	if err := os.Chdir(other); err != nil {
+		t.Fatal(err)
+	}
+
+	if !coreSSHCommandConfigured("git", "-C", repo, "fetch", "--quiet") {
+		t.Error("expected true when core.sshCommand is set in the -C target repo")
+	}
+}
+
+func TestCoreSSHCommandInNonColocatedJJRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	jjRoot := t.TempDir()
+	storeGit := filepath.Join(jjRoot, ".jj", "repo", "store", "git")
+	if err := os.MkdirAll(storeGit, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(jjRoot, ".jj", "repo", "store", "type"), []byte("git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, storeGit, "init", "--bare", "--quiet")
+	gitRun(t, storeGit, "config", "core.sshCommand", "ssh -i /jj/key")
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWd) })
+	if err := os.Chdir(jjRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	if !coreSSHCommandConfigured("jj", "--repository", jjRoot, "git", "fetch", "--quiet") {
+		t.Error("expected true when core.sshCommand is set in a non-colocated jj repo's backing git store")
+	}
+}

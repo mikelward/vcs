@@ -312,15 +312,23 @@ func gitMarkerPath(rootDir string) string {
 }
 
 // coreSSHCommandConfigured reports whether git's core.sshCommand is set
-// for the current directory. It only checks for git-like binaries (git,
+// for the target repository. It only checks for git-like binaries (git,
 // jj) since GIT_SSH_COMMAND is irrelevant to hg. Returns false on any
 // error so the caller falls back to injecting the safe default.
-func coreSSHCommandConfigured(name string) bool {
+func coreSSHCommandConfigured(name string, args ...string) bool {
 	base := filepath.Base(name)
 	if base != "git" && base != "jj" {
 		return false
 	}
-	cmd := exec.Command("git", "config", "core.sshCommand")
+	var gitArgs []string
+	if base == "git" && len(args) >= 2 && args[0] == "-C" {
+		gitArgs = []string{"-C", args[1], "config", "core.sshCommand"}
+	} else if base == "jj" && len(args) >= 2 && args[0] == "--repository" {
+		gitArgs = []string{"--git-dir=" + vcsdetect.JJGitDir(args[1]), "config", "core.sshCommand"}
+	} else {
+		gitArgs = []string{"config", "core.sshCommand"}
+	}
+	cmd := exec.Command("git", gitArgs...)
 	cmd.Env = runner.CleanGitEnv()
 	out, err := cmd.Output()
 	return err == nil && strings.TrimSpace(string(out)) != ""
@@ -361,7 +369,7 @@ func detachedSpawn(name string, args []string, extraFiles []*os.File) error {
 	}
 	cmd := exec.Command(name, args...)
 	env := append(runner.CleanGitEnv(), fetchEnv...)
-	if os.Getenv("GIT_SSH_COMMAND") == "" && os.Getenv("GIT_SSH") == "" && !coreSSHCommandConfigured(name) {
+	if os.Getenv("GIT_SSH_COMMAND") == "" && os.Getenv("GIT_SSH") == "" && !coreSSHCommandConfigured(name, args...) {
 		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
 	}
 	cmd.Env = env
