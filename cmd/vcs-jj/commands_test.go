@@ -594,6 +594,43 @@ func TestReviewGitBackend(t *testing.T) {
 	}
 }
 
+func TestReviewNonColocatedAndBookmarkSuffix(t *testing.T) {
+	root := t.TempDir()
+	storeGit := filepath.Join(root, ".jj", "repo", "store", "git")
+	if err := os.MkdirAll(storeGit, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".jj", "repo", "store", "type"), []byte("git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storeGit, "config"), []byte("[remote \"origin\"]\n\turl = https://github.com/example/proj.git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bindir := t.TempDir()
+	ghLog := filepath.Join(t.TempDir(), "gh.log")
+	jjScript := "#!/bin/sh\ncase \"$*\" in *\"bookmark list\"*) echo 'feat*: abc123 some commit' ;; esac\n"
+	if err := os.WriteFile(filepath.Join(bindir, "jj"), []byte(jjScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	ghScript := "#!/bin/sh\necho \"GIT_DIR=${GIT_DIR-UNSET} ARGS=$*\" >> " + ghLog + "\n"
+	if err := os.WriteFile(filepath.Join(bindir, "gh"), []byte(ghScript), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GIT_DIR", "")
+
+	if _, err := runDispatch(t, root, "review"); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	got := readLog(t, ghLog)
+	if !strings.Contains(got, "GIT_DIR="+storeGit) {
+		t.Errorf("gh did not get GIT_DIR=%s: %q", storeGit, got)
+	}
+	if !strings.Contains(got, "ARGS=pr view feat --json url -q .url") {
+		t.Errorf("gh did not strip '*' suffix from bookmark: %q", got)
+	}
+}
+
 func TestUploadUploadchain(t *testing.T) {
 	repo := newJJRepo(t)
 	jjLog, _ := stubJJ(t)

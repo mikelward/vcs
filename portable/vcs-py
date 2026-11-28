@@ -1049,15 +1049,23 @@ class Jj(Backend):
             return rc
         if self.info.hosting == "github" and which("gh"):
             bookmark = try_capture("jj", "bookmark", "list", "-r", "@") or ""
-            head = bookmark.split(":", 1)[0].strip() if bookmark else ""
+            head = (bookmark.split(":", 1)[0].strip().rstrip("*?")
+                    if bookmark else "")
+            gh_kwargs = {}
+            if (not os.environ.get("GIT_DIR") and self.info.root
+                    and not os.path.exists(
+                        os.path.join(self.info.root, ".git"))):
+                gd = jj_git_dir(self.info.root)
+                if os.path.isdir(gd):
+                    gh_kwargs["env"] = dict(os.environ, GIT_DIR=gd)
             view = ["pr", "view"] + ([head] if head else []) + [
                 "--json", "url", "-q", ".url"]
-            if run("gh", *view) != 0:
+            if run("gh", *view, **gh_kwargs) != 0:
                 create = ["pr", "create", "--fill"]
                 if head:
                     create += ["--head", head]
                 create += reviewers if reviewers else ["--draft"]
-                return run("gh", *create)
+                return run("gh", *create, **gh_kwargs)
         return 0
 
     def count(self):

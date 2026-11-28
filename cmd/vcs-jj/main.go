@@ -390,12 +390,36 @@ func jjReview(args []string) error {
 			return err
 		}
 		if hosting() == "github" && runner.FindCommand("gh") != "" {
-			// Get current bookmark for --head flag.
+			// Get current bookmark for --head flag. `jj bookmark list` appends
+			// `*` (diverged from tracked remote) or `?` (conflicted) before `:`.
 			bookmark, _ := capture("jj", "bookmark", "list", "-r", "@")
 			var head string
 			if bookmark != "" {
 				parts := strings.SplitN(bookmark, ":", 2)
-				head = strings.TrimSpace(parts[0])
+				head = strings.TrimRight(strings.TrimSpace(parts[0]), "*?")
+			}
+
+			// In a non-colocated jj repo there is no top-level .git, so gh
+			// needs GIT_DIR pointed at the backing git store to find the remote.
+			if os.Getenv("GIT_DIR") == "" {
+				if dir, err := os.Getwd(); err == nil {
+					if info, err := vcsdetect.Detect(dir); err == nil && info.RootDir != "" {
+						if _, err := os.Stat(filepath.Join(info.RootDir, ".git")); err != nil {
+							gitDir := vcsdetect.JJGitDir(info.RootDir)
+							if fi, err := os.Stat(gitDir); err == nil && fi.IsDir() {
+								oldVal, hadOld := os.LookupEnv("GIT_DIR")
+								os.Setenv("GIT_DIR", gitDir)
+								defer func() {
+									if hadOld {
+										os.Setenv("GIT_DIR", oldVal)
+									} else {
+										os.Unsetenv("GIT_DIR")
+									}
+								}()
+							}
+						}
+					}
+				}
 			}
 
 			// Check if PR exists.

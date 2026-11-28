@@ -691,6 +691,35 @@ class PromptLineTest(Base):
                                   "SSH_AUTH_SOCK": ""})
 
 
+class JjReviewTest(Base):
+    def test_non_colocated_git_dir_and_bookmark_suffix(self):
+        root = self.e.path("jj-noncoloc")
+        store_git = os.path.join(root, ".jj", "repo", "store", "git")
+        os.makedirs(store_git)
+        with open(os.path.join(root, ".jj", "repo", "store", "type"),
+                  "w") as f:
+            f.write("git\n")
+        with open(os.path.join(store_git, "config"), "w") as f:
+            f.write('[remote "origin"]\n\turl = https://github.com/example/proj.git\n')
+        bindir = self.e.path("bin")
+        os.mkdir(bindir)
+        gh_log = self.e.path("gh.log")
+        with open(os.path.join(bindir, "jj"), "w") as f:
+            f.write('#!/bin/sh\ncase "$*" in *"bookmark list"*) echo "feat*: abc123 commit" ;; esac\n')
+        os.chmod(os.path.join(bindir, "jj"), 0o755)
+        with open(os.path.join(bindir, "gh"), "w") as f:
+            f.write('#!/bin/sh\necho "GIT_DIR=${GIT_DIR-UNSET} ARGS=$*" >> '
+                    + gh_log + '\n')
+        os.chmod(os.path.join(bindir, "gh"), 0o755)
+        env = {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+        rc, out, err = self.e.vcs(ALL_IMPLS[-1], ["review"], root, env)
+        self.assertEqual(rc, 0, err)
+        with open(gh_log) as f:
+            got = f.read()
+        self.assertIn("GIT_DIR=" + store_git, got)
+        self.assertIn("ARGS=pr view feat --json url -q .url", got)
+
+
 def build_go(env):
     out = env.path("go-bin")
     os.mkdir(out)
