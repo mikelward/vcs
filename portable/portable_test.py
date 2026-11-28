@@ -527,8 +527,12 @@ class AutoFetchTest(Base):
         self.fetch(ALL_IMPLS, "fresh", ["--max-age=0.75h"])
         for impl in ALL_IMPLS:
             with self.subTest(impl=impl_name(impl)):
-                age(self.fetch_head, 90)
+                age(self.fetch_head, 30)
                 self.fetch([impl], "fetched", ["--max-age=1s"])
+        for impl in ALL_IMPLS:
+            with self.subTest(impl=impl_name(impl)):
+                age(self.fetch_head, 2)
+                self.fetch([impl], "fetched", ["--max-age=0m"])
 
     def test_bad_flags(self):
         for args, err in ((["--max-age=soon"], "invalid --max-age"),

@@ -510,8 +510,8 @@ _unmerged() {
 
 # auto-fetch: when this checkout's last fetch is older than --max-age, start
 # vcs-py's auto-fetch in the background, which locks, fetches and logs. The
-# prompt pays only the check here. Durations other than a whole number of
-# hours, minutes or seconds, and --dry-run, go to vcs-py itself.
+# prompt pays only the check here. Durations other than a positive whole number
+# of hours or minutes, and --dry-run, go to vcs-py itself.
 _auto_fetch() {
     _verbose=false _age=1h
     while test $# -gt 0; do
@@ -530,13 +530,12 @@ _auto_fetch() {
     _vflag=
     $_verbose && _vflag=--verbose
     case $_age in
-        ''|*[!0-9hms]*|*[hms]*[0-9hms]*|[hms]*) _min= ;;
+        ''|*[!0-9hm]*|*[hm]*[0-9hm]*|[hm]*) _min= ;;
         *h) _min=$((${_age%h} * 60)) ;;
         *m) _min=${_age%m} ;;
-        *s) _min=$(((${_age%s} + 59) / 60)) ;;
         *) _min= ;;
     esac
-    if test -z "$_min" || $_dry; then
+    if test -z "$_min" || test "$_min" -le 0 || $_dry; then
         _py auto-fetch --max-age="$_age" $_vflag
     fi
 
