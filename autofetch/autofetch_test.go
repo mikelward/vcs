@@ -771,3 +771,52 @@ func TestFetchEnvAsksNoOne(t *testing.T) {
 		t.Error("the askpass helper was asked")
 	}
 }
+
+func TestDetachedSpawnStripsInheritedGitDir(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	script := filepath.Join(t.TempDir(), "dump-env")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s' \"${GIT_DIR-UNSET}\" >&3\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_DIR", "/bogus/inherited.git")
+	if err := detachedSpawn(script, nil, []*os.File{w}); err != nil {
+		w.Close()
+		t.Fatalf("detachedSpawn: %v", err)
+	}
+	w.Close()
+	var buf [64]byte
+	n, _ := r.Read(buf[:])
+	if got := string(buf[:n]); got != "UNSET" {
+		t.Fatalf("child saw GIT_DIR=%q, want UNSET", got)
+	}
+}
+
+func TestCoreSSHCommandIgnoresInheritedGitDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	repoWithSSH := t.TempDir()
+	gitInit(t, repoWithSSH)
+	gitRun(t, repoWithSSH, "config", "core.sshCommand", "ssh -i /other/key")
+
+	plainRepo := t.TempDir()
+	gitInit(t, plainRepo)
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(origWd) })
+	if err := os.Chdir(plainRepo); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_DIR", filepath.Join(repoWithSSH, ".git"))
+
+	if coreSSHCommandConfigured("git") {
+		t.Error("coreSSHCommandConfigured leaked inherited GIT_DIR from another repo")
+	}
+}

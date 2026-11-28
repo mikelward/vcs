@@ -1368,6 +1368,8 @@ class _ProbeFailed(Exception):
 
 def _probe(name, root, *argv):
     try:
+        if argv and argv[0] == "git":
+            return capture(*argv, env=clean_git_env())
         return capture(*argv)
     except (Error, Failed) as e:
         detail = e.stderr if isinstance(e, Failed) else e.args[0] + "\n"
@@ -1726,11 +1728,13 @@ def fetch_env(command):
     program (GIT_ASKPASS, core.askPass, SSH_ASKPASS) can still open a
     dialog, so git's is replaced by `false`, which answers nothing, and
     ssh's is turned off."""
-    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="false",
+    env = clean_git_env()
+    env.update(GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="false",
                SSH_ASKPASS_REQUIRE="never")
     if (not env.get("GIT_SSH_COMMAND") and not env.get("GIT_SSH")
             and os.path.basename(command[0]) in ("git", "jj")
-            and not try_capture("git", "config", "core.sshCommand")):
+            and not try_capture("git", "config", "core.sshCommand",
+                                env=clean_git_env())):
         env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
     return env
 

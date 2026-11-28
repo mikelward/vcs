@@ -122,7 +122,11 @@ func Gather(info *vcsdetect.Info, fields map[string]bool, opts *Options) (*Resul
 }
 
 func capture(name string, args ...string) (string, error) {
-	out, err := exec.Command(name, args...).Output()
+	cmd := exec.Command(name, args...)
+	if name == "git" {
+		cmd.Env = runner.CleanGitEnv()
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}

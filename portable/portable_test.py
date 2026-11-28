@@ -286,6 +286,13 @@ class GitPromptTest(Base):
                 self.assertEqual((rc, err),
                                  (1, "vcs prompt-info: unknown flag: --bogus\n"))
 
+    def test_ignores_inherited_git_dir(self):
+        with open(os.path.join(self.root, "new"), "w") as f:
+            f.write("x")
+        self.prompt(self.root, want="proj main *",
+                    extra_env={"GIT_DIR": self.e.path("other.git")})
+
+
 
 @unittest.skipUnless(shutil.which("hg"), "hg not installed")
 class HgPromptTest(Base):
@@ -633,6 +640,20 @@ class AutoFetchTest(Base):
         with open(calls) as f:
             self.assertEqual(f.read(), ("--repository %s piper pull\n" % root)
                              * len(ALL_IMPLS))
+
+    def test_ignores_inherited_git_dir(self):
+        for impl in ALL_IMPLS:
+            with self.subTest(impl=impl_name(impl)):
+                age(self.fetch_head, 2 * HOURS)
+                self.fetch([impl], "fetched",
+                           env={"GIT_DIR": self.e.path("other.git")})
+                self.assertLess(time.time() - os.stat(self.fetch_head).st_mtime,
+                                60)
+        with open(self.log) as f:
+            log = f.read()
+        self.assertEqual(log.count("proj: ended with exit status 0"),
+                         len(ALL_IMPLS), log)
+
 
 
 class PromptLineTest(Base):
