@@ -300,7 +300,7 @@ _status_behind() {
     _status='' _behind=false
     case $_vcs in
         git)
-            _out=$(git -C "$_root" status --branch --porcelain \
+            _out=$(_git_quiet status --branch --porcelain \
                 --untracked-files=all) || { _probe_failed "git status"; return 0; }
             case $_out in *"$_nl"*) _status='*' ;; esac
             case ${_out%%"$_nl"*} in *...*'behind '*) _behind=true ;; esac

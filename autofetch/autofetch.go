@@ -320,7 +320,9 @@ func coreSSHCommandConfigured(name string) bool {
 	if base != "git" && base != "jj" {
 		return false
 	}
-	out, err := exec.Command("git", "config", "core.sshCommand").Output()
+	cmd := exec.Command("git", "config", "core.sshCommand")
+	cmd.Env = runner.CleanGitEnv()
+	out, err := cmd.Output()
 	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
@@ -358,7 +360,7 @@ func detachedSpawn(name string, args []string, extraFiles []*os.File) error {
 		return nil
 	}
 	cmd := exec.Command(name, args...)
-	env := append(os.Environ(), fetchEnv...)
+	env := append(runner.CleanGitEnv(), fetchEnv...)
 	if os.Getenv("GIT_SSH_COMMAND") == "" && os.Getenv("GIT_SSH") == "" && !coreSSHCommandConfigured(name) {
 		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
 	}

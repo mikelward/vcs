@@ -1054,3 +1054,31 @@ func TestGatherHgStatusFailureIsReported(t *testing.T) {
 		}
 	}
 }
+
+func TestGatherGitIgnoresInheritedGitDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	tmp := initGitRepo(t)
+	if err := os.WriteFile(filepath.Join(tmp, "dirty.txt"), []byte("x\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a shell spawned from a git hook or `git rebase -x`, where
+	// GIT_DIR is set in the environment. `git -C root status` would fail
+	// with "fatal: this operation must be run in a work tree" unless
+	// GIT_DIR is stripped.
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "other.git"))
+
+	info := &vcsdetect.Info{VCS: "git", Backend: "git", RootDir: tmp}
+	fields := map[string]bool{"branch": true, "status": true, "behind": true}
+	result, err := Gather(info, fields, nil)
+	if err != nil {
+		t.Fatalf("Gather() error: %v", err)
+	}
+	if result.ProbeErr != nil {
+		t.Fatalf("ProbeErr = %v, want nil when GIT_DIR is inherited", result.ProbeErr)
+	}
+	if result.Status != "*" {
+		t.Errorf("Status = %q, want %q", result.Status, "*")
+	}
+}
