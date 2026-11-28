@@ -341,7 +341,7 @@ func p4Fix(args []string) error {
 	if err == nil {
 		for _, hookDir := range []string{".p4/hooks/fix", ".g4/hooks/fix"} {
 			script := filepath.Join(root, hookDir)
-			if fi, err := os.Stat(script); err == nil && fi.Mode()&0111 != 0 {
+			if fi, err := os.Stat(script); err == nil && fi.Mode().IsRegular() && fi.Mode()&0111 != 0 {
 				return runner.Run(script, args...)
 			}
 		}
