@@ -51,6 +51,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: Check AGENTS.md size
+        run: |
+          size=$(wc -c < AGENTS.md | tr -d ' ')
+          if test "$size" -ge 24000; then
+            echo "AGENTS.md is $size bytes; keep it under 24000 (Antigravity truncates the rest)" >&2
+            exit 1
+          fi
       - uses: mikelward/lanes@main
         id: lane
         with:
